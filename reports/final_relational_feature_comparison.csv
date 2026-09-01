@@ -1,0 +1,5 @@
+,accuracy,precision,recall,f1,roc_auc,pr_auc
+Application_Only,0.6893,0.161368,0.678751,0.260745,0.748826,0.228761
+Application_Plus_Bureau,0.691348,0.163353,0.684995,0.263797,0.753412,0.235836
+Application_Plus_Bureau_Plus_Previous,0.696307,0.166982,0.692447,0.269077,0.760525,0.243105
+Application_Plus_Bureau_Plus_Previous_Plus_Installments,0.702649,0.170272,0.69285,0.273363,0.765474,0.247268

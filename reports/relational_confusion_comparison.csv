@@ -1,0 +1,4 @@
+model,TN,FP,FN,TP
+Application_Only_Balanced,39024,17514,1595,3370
+Application_Plus_Bureau_Balanced,39119,17419,1564,3401
+Application_Plus_Bureau_Plus_Previous_Balanced,39387,17151,1527,3438
