@@ -8,6 +8,15 @@ import pandas as pd
 from catboost import CatBoostClassifier
 
 
+# Support both:
+# python -m src.inference
+# python src/inference.py
+try:
+    from src.feature_engineering import build_model_matrix
+except ModuleNotFoundError:
+    from feature_engineering import build_model_matrix
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_MODEL_PATH = (
@@ -23,7 +32,13 @@ DEFAULT_SCHEMA_PATH = (
 )
 
 
-def load_schema(schema_path: Path) -> dict:
+def load_schema(
+    schema_path: Path
+) -> dict:
+    """
+    Load the saved model feature schema.
+    """
+
     with open(
         schema_path,
         "r",
@@ -32,136 +47,20 @@ def load_schema(schema_path: Path) -> dict:
         return json.load(file)
 
 
-def load_model(model_path: Path) -> CatBoostClassifier:
+def load_model(
+    model_path: Path
+) -> CatBoostClassifier:
+    """
+    Load the trained CatBoost model artifact.
+    """
+
     model = CatBoostClassifier()
-    model.load_model(str(model_path))
+
+    model.load_model(
+        str(model_path)
+    )
+
     return model
-
-
-def build_model_matrix(
-    application_df: pd.DataFrame,
-    bureau_df: pd.DataFrame,
-    previous_df: pd.DataFrame,
-    installments_df: pd.DataFrame,
-    schema: dict
-) -> tuple[pd.Series, pd.DataFrame]:
-
-    data = (
-        application_df
-        .merge(
-            bureau_df,
-            on="SK_ID_CURR",
-            how="left",
-            validate="one_to_one"
-        )
-        .merge(
-            previous_df,
-            on="SK_ID_CURR",
-            how="left",
-            validate="one_to_one"
-        )
-        .merge(
-            installments_df,
-            on="SK_ID_CURR",
-            how="left",
-            validate="one_to_one"
-        )
-    )
-
-    engineered_flags = pd.DataFrame(
-        {
-            "BUREAU_HAS_HISTORY": (
-                data["BUREAU_LOAN_COUNT"]
-                .notna()
-                .astype("int8")
-            ),
-            "PREV_HAS_HISTORY": (
-                data["PREV_APPLICATION_COUNT"]
-                .notna()
-                .astype("int8")
-            ),
-            "INST_HAS_HISTORY": (
-                data["INST_PAYMENT_RECORD_COUNT"]
-                .notna()
-                .astype("int8")
-            ),
-            "DAYS_EMPLOYED_ANOMALY": (
-                data["DAYS_EMPLOYED"]
-                == schema["days_employed_sentinel"]
-            ).astype("int8")
-        },
-        index=data.index
-    )
-
-    data = pd.concat(
-        [data, engineered_flags],
-        axis=1
-    )
-
-    data.loc[
-        data["DAYS_EMPLOYED"]
-        == schema["days_employed_sentinel"],
-        "DAYS_EMPLOYED"
-    ] = np.nan
-
-    customer_ids = data["SK_ID_CURR"].copy()
-
-    columns_to_drop = [
-        column
-        for column in schema["excluded_columns"]
-        if column in data.columns
-    ]
-
-    X = data.drop(
-        columns=columns_to_drop
-    ).copy()
-
-    expected_features = schema["features"]
-
-    missing_features = [
-        feature
-        for feature in expected_features
-        if feature not in X.columns
-    ]
-
-    extra_features = [
-        feature
-        for feature in X.columns
-        if feature not in expected_features
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "Missing model features: "
-            f"{missing_features}"
-        )
-
-    if extra_features:
-        raise ValueError(
-            "Unexpected model features: "
-            f"{extra_features}"
-        )
-
-    X = X[
-        expected_features
-    ].copy()
-
-    missing_token = schema[
-        "categorical_missing_value"
-    ]
-
-    for column in schema["categorical_features"]:
-        X[column] = (
-            X[column]
-            .astype("object")
-            .where(
-                X[column].notna(),
-                missing_token
-            )
-            .astype(str)
-        )
-
-    return customer_ids, X
 
 
 def predict_risk_scores(
@@ -172,9 +71,21 @@ def predict_risk_scores(
     model_path: Path = DEFAULT_MODEL_PATH,
     schema_path: Path = DEFAULT_SCHEMA_PATH
 ) -> pd.DataFrame:
+    """
+    Generate CreditLens risk scores.
 
-    schema = load_schema(schema_path)
-    model = load_model(model_path)
+    The feature-engineering and model-matrix logic is
+    delegated to src.feature_engineering so training
+    and inference can share the same transformation code.
+    """
+
+    schema = load_schema(
+        schema_path
+    )
+
+    model = load_model(
+        model_path
+    )
 
     customer_ids, X = build_model_matrix(
         application_df=application_df,
@@ -184,19 +95,23 @@ def predict_risk_scores(
         schema=schema
     )
 
-    risk_scores = model.predict_proba(X)[:, 1]
+    risk_scores = model.predict_proba(
+        X
+    )[:, 1]
 
     if np.isnan(risk_scores).any():
         raise ValueError(
             "Model produced NaN risk scores."
         )
 
-    return pd.DataFrame(
+    predictions = pd.DataFrame(
         {
             "SK_ID_CURR": customer_ids.values,
             "risk_score": risk_scores
         }
     )
+
+    return predictions
 
 
 def main() -> None:
@@ -209,43 +124,59 @@ def main() -> None:
     parser.add_argument(
         "--application",
         required=True,
-        type=Path
+        type=Path,
+        help="Path to application-level CSV data."
     )
 
     parser.add_argument(
         "--bureau",
         required=True,
-        type=Path
+        type=Path,
+        help=(
+            "Path to customer-level bureau "
+            "feature CSV."
+        )
     )
 
     parser.add_argument(
         "--previous",
         required=True,
-        type=Path
+        type=Path,
+        help=(
+            "Path to customer-level previous "
+            "application feature CSV."
+        )
     )
 
     parser.add_argument(
         "--installments",
         required=True,
-        type=Path
+        type=Path,
+        help=(
+            "Path to customer-level installment "
+            "feature CSV."
+        )
     )
 
     parser.add_argument(
         "--model",
         type=Path,
-        default=DEFAULT_MODEL_PATH
+        default=DEFAULT_MODEL_PATH,
+        help="Path to trained CatBoost model."
     )
 
     parser.add_argument(
         "--schema",
         type=Path,
-        default=DEFAULT_SCHEMA_PATH
+        default=DEFAULT_SCHEMA_PATH,
+        help="Path to model feature schema JSON."
     )
 
     parser.add_argument(
         "--output",
         required=True,
-        type=Path
+        type=Path,
+        help="Path for generated risk-score CSV."
     )
 
     args = parser.parse_args()
@@ -255,8 +186,14 @@ def main() -> None:
         low_memory=False
     )
 
-    bureau_df = pd.read_csv(args.bureau)
-    previous_df = pd.read_csv(args.previous)
+    bureau_df = pd.read_csv(
+        args.bureau
+    )
+
+    previous_df = pd.read_csv(
+        args.previous
+    )
+
     installments_df = pd.read_csv(
         args.installments
     )
