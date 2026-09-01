@@ -1,0 +1,37 @@
+{
+  "model_name": "CreditLens Gender-Free CatBoost",
+  "model_type": "CatBoostClassifier",
+  "training_rows": 307511,
+  "feature_count": 194,
+  "categorical_feature_count": 15,
+  "numeric_feature_count": 179,
+  "iterations": 1470,
+  "learning_rate": 0.03,
+  "depth": 7,
+  "l2_leaf_reg": 5,
+  "class_weight_strategy": "Balanced",
+  "random_seed": 42,
+  "training_time_seconds": 337.2316823005676,
+  "excluded_sensitive_feature": "CODE_GENDER",
+  "development_validation": {
+    "roc_auc": 0.782085,
+    "pr_auc": 0.279699,
+    "f1_at_0_50": 0.301294
+  },
+  "stability_cv_oof": {
+    "roc_auc": 0.777891,
+    "pr_auc": 0.268364,
+    "f1_at_0_50": 0.300346,
+    "recall_at_0_50": 0.639517
+  },
+  "probability_note": "Model outputs are risk scores from a class-balanced model and should not be interpreted as calibrated probabilities of default without probability calibration.",
+  "inference_validation": {
+    "application_test_rows": 48744,
+    "feature_count": 194,
+    "missing_features": 0,
+    "extra_features": 0,
+    "nan_predictions": 0,
+    "reload_verification_passed": true,
+    "cli_regression_test_passed": true
+  }
+}

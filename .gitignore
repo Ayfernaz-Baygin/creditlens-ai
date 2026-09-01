@@ -39,6 +39,11 @@ data/processed/*
 models/*
 !models/.gitkeep
 
+# Keep final CreditLens model artifacts
+!models/creditlens_catboost_gender_free.cbm
+!models/creditlens_feature_schema.json
+!models/creditlens_model_metadata.json
+
 # Generated figures
 reports/figures/*
 !reports/figures/.gitkeep
