@@ -1,0 +1,3 @@
+model,TN,FP,FN,TP
+LogisticRegression,56502,36,4909,56
+LogisticRegression_Balanced,39024,17514,1595,3370
