@@ -4,7 +4,8 @@ from typing import Any
 
 import pandas as pd
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.inference import (
@@ -21,6 +22,36 @@ METADATA_PATH = (
     / "creditlens_model_metadata.json"
 )
 
+PROJECT_ROOT = DEFAULT_MODEL_PATH.parent.parent
+
+APPLICATION_TEST_PATH = (
+    PROJECT_ROOT
+    / "data"
+    / "raw"
+    / "application_test.csv"
+)
+
+BUREAU_FEATURES_PATH = (
+    PROJECT_ROOT
+    / "data"
+    / "interim"
+    / "bureau_customer_features.csv"
+)
+
+PREVIOUS_FEATURES_PATH = (
+    PROJECT_ROOT
+    / "data"
+    / "interim"
+    / "previous_application_customer_features.csv"
+)
+
+INSTALLMENTS_FEATURES_PATH = (
+    PROJECT_ROOT
+    / "data"
+    / "interim"
+    / "installments_customer_features.csv"
+)
+
 
 app = FastAPI(
     title="CreditLens AI API",
@@ -32,33 +63,45 @@ app = FastAPI(
 )
 
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 class PredictionRequest(BaseModel):
     application: dict[str, Any] = Field(
         ...,
         description=(
             "Application-level customer features."
-        )
+        ),
     )
 
     bureau: dict[str, Any] = Field(
         ...,
         description=(
             "Aggregated bureau customer features."
-        )
+        ),
     )
 
     previous: dict[str, Any] = Field(
         ...,
         description=(
             "Aggregated previous-application features."
-        )
+        ),
     )
 
     installments: dict[str, Any] = Field(
         ...,
         description=(
             "Aggregated installment-payment features."
-        )
+        ),
     )
 
 
@@ -107,9 +150,69 @@ def get_runtime_metadata():
     with open(
         METADATA_PATH,
         "r",
-        encoding="utf-8"
+        encoding="utf-8",
     ) as file:
         return json.load(file)
+
+
+@lru_cache(maxsize=1)
+def get_demo_data():
+    """
+    Load local Home Credit test and aggregated
+    feature data once for dashboard demo use.
+    """
+
+    required_files = [
+        APPLICATION_TEST_PATH,
+        BUREAU_FEATURES_PATH,
+        PREVIOUS_FEATURES_PATH,
+        INSTALLMENTS_FEATURES_PATH,
+    ]
+
+    missing_files = [
+        str(path)
+        for path in required_files
+        if not path.exists()
+    ]
+
+    if missing_files:
+        raise FileNotFoundError(
+            "Demo data files are missing: "
+            + ", ".join(missing_files)
+        )
+
+    application = pd.read_csv(
+        APPLICATION_TEST_PATH,
+        low_memory=False,
+    )
+
+    bureau = pd.read_csv(
+        BUREAU_FEATURES_PATH
+    )
+
+    previous = pd.read_csv(
+        PREVIOUS_FEATURES_PATH
+    )
+
+    installments = pd.read_csv(
+        INSTALLMENTS_FEATURES_PATH
+    )
+
+    common_ids = sorted(
+        set(application["SK_ID_CURR"])
+        & set(bureau["SK_ID_CURR"])
+        & set(previous["SK_ID_CURR"])
+        & set(installments["SK_ID_CURR"])
+    )
+
+    return {
+        "application": application,
+        "bureau": bureau,
+        "previous": previous,
+        "installments": installments,
+        "common_ids": common_ids,
+        "common_id_set": set(common_ids),
+    }
 
 
 def validate_customer_ids(
@@ -271,9 +374,172 @@ def model_info():
         ) from exc
 
 
+@app.get("/demo/customers")
+def demo_customers(
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    )
+):
+    """
+    Return customer IDs available in every
+    feature source required by the demo model.
+    """
+
+    try:
+        demo_data = get_demo_data()
+
+        customer_ids = (
+            demo_data["common_ids"][:limit]
+        )
+
+        return {
+            "customers": [
+                int(customer_id)
+                for customer_id
+                in customer_ids
+            ],
+            "returned": len(
+                customer_ids
+            ),
+            "available": len(
+                demo_data["common_ids"]
+            ),
+        }
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not load demo customers: "
+                f"{exc}"
+            ),
+        ) from exc
+
+
+@app.post(
+    "/demo/predict/{customer_id}",
+    response_model=PredictionResponse,
+)
+def demo_predict(
+    customer_id: int
+):
+    """
+    Generate a prediction for a customer from
+    the local Home Credit demo dataset.
+    """
+
+    try:
+        demo_data = get_demo_data()
+
+        if (
+            customer_id
+            not in demo_data[
+                "common_id_set"
+            ]
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Customer was not found "
+                    "in all required demo "
+                    "feature sources."
+                ),
+            )
+
+        application_df = (
+            demo_data["application"]
+            .loc[
+                demo_data[
+                    "application"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .copy()
+        )
+
+        bureau_df = (
+            demo_data["bureau"]
+            .loc[
+                demo_data[
+                    "bureau"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .copy()
+        )
+
+        previous_df = (
+            demo_data["previous"]
+            .loc[
+                demo_data[
+                    "previous"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .copy()
+        )
+
+        installments_df = (
+            demo_data["installments"]
+            .loc[
+                demo_data[
+                    "installments"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .copy()
+        )
+
+        prediction = predict_risk_scores(
+            application_df=application_df,
+            bureau_df=bureau_df,
+            previous_df=previous_df,
+            installments_df=installments_df,
+            model=get_runtime_model(),
+            schema=get_runtime_schema(),
+        )
+
+        risk_score = float(
+            prediction.iloc[0][
+                "risk_score"
+            ]
+        )
+
+        return PredictionResponse(
+            SK_ID_CURR=customer_id,
+            risk_score=risk_score,
+            interpretation=(
+                "Risk score from the "
+                "class-balanced CatBoost model. "
+                "This value is not a calibrated "
+                "probability of default."
+            ),
+        )
+
+    except HTTPException:
+        raise
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Demo prediction failed: "
+                f"{exc}"
+            ),
+        ) from exc
+
+
 @app.post(
     "/predict",
-    response_model=PredictionResponse
+    response_model=PredictionResponse,
 )
 def predict(
     payload: PredictionRequest
