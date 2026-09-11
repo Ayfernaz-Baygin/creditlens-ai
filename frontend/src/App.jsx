@@ -3,6 +3,26 @@ import "./App.css";
 
 const API_BASE_URL = "http://127.0.0.1:8000";
 
+function formatCurrency(value) {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function formatYears(value) {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+
+  return `${value} years`;
+}
+
+function formatHistory(value) {
+  return value ? "Available" : "No history";
+}
+
 function App() {
   const [apiStatus, setApiStatus] = useState("loading");
   const [modelInfo, setModelInfo] = useState(null);
@@ -13,7 +33,16 @@ function App() {
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [prediction, setPrediction] = useState(null);
 
+  const [customerProfile, setCustomerProfile] =
+    useState(null);
+
+  const [profileError, setProfileError] =
+    useState("");
+
   const [loadingCustomers, setLoadingCustomers] =
+    useState(false);
+
+  const [loadingProfile, setLoadingProfile] =
     useState(false);
 
   const [predicting, setPredicting] =
@@ -72,6 +101,60 @@ function App() {
 
     loadBackendData();
   }, []);
+
+  useEffect(() => {
+    if (!analysisOpen || !selectedCustomer) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadCustomerProfile() {
+      setLoadingProfile(true);
+      setProfileError("");
+      setCustomerProfile(null);
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/demo/customers/${selectedCustomer}`
+        );
+
+        if (!response.ok) {
+          const errorData =
+            await response.json();
+
+          throw new Error(
+            errorData.detail ??
+              "Customer profile could not be loaded."
+          );
+        }
+
+        const data = await response.json();
+
+        if (!cancelled) {
+          setCustomerProfile(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setProfileError(
+            err instanceof Error
+              ? err.message
+              : "Customer profile failed."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingProfile(false);
+        }
+      }
+    }
+
+    loadCustomerProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisOpen, selectedCustomer]);
 
   async function startAnalysis() {
     setAnalysisOpen(true);
@@ -392,6 +475,139 @@ function App() {
                     </select>
                   )}
                 </div>
+
+                {loadingProfile && (
+                  <div className="loading-text">
+                    Loading customer profile...
+                  </div>
+                )}
+
+                {profileError && (
+                  <div className="error-banner">
+                    {profileError}
+                  </div>
+                )}
+
+                {customerProfile && !loadingProfile && (
+                  <div className="profile-card">
+                    <p className="eyebrow">
+                      CUSTOMER PROFILE
+                    </p>
+
+                    <div className="profile-grid">
+                      <div className="profile-item">
+                        <span>Annual Income</span>
+                        <strong>
+                          {formatCurrency(
+                            customerProfile.income_total
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Credit Amount</span>
+                        <strong>
+                          {formatCurrency(
+                            customerProfile.credit_amount
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Annuity</span>
+                        <strong>
+                          {formatCurrency(
+                            customerProfile.annuity_amount
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Goods Price</span>
+                        <strong>
+                          {formatCurrency(
+                            customerProfile.goods_price
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Age</span>
+                        <strong>
+                          {formatYears(
+                            customerProfile.age_years
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>
+                          Employment Duration
+                        </span>
+                        <strong>
+                          {formatYears(
+                            customerProfile.employment_years
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Education</span>
+                        <strong>
+                          {customerProfile.education_type ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Income Type</span>
+                        <strong>
+                          {customerProfile.income_type ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Family Status</span>
+                        <strong>
+                          {customerProfile.family_status ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Bureau History</span>
+                        <strong>
+                          {formatHistory(
+                            customerProfile.has_bureau_history
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>
+                          Previous Applications
+                        </span>
+                        <strong>
+                          {formatHistory(
+                            customerProfile.has_previous_application_history
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>
+                          Installment History
+                        </span>
+                        <strong>
+                          {formatHistory(
+                            customerProfile.has_installment_history
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <button
                   className="predict-button"

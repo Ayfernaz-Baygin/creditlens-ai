@@ -111,6 +111,22 @@ class PredictionResponse(BaseModel):
     interpretation: str
 
 
+class CustomerSummaryResponse(BaseModel):
+    SK_ID_CURR: int
+    income_total: float | None
+    credit_amount: float | None
+    annuity_amount: float | None
+    goods_price: float | None
+    age_years: float | None
+    employment_years: float | None
+    education_type: str | None
+    income_type: str | None
+    family_status: str | None
+    has_bureau_history: bool
+    has_previous_application_history: bool
+    has_installment_history: bool
+
+
 @lru_cache(maxsize=1)
 def get_runtime_model():
     """
@@ -213,6 +229,41 @@ def get_demo_data():
         "common_ids": common_ids,
         "common_id_set": set(common_ids),
     }
+
+
+def _safe_float(value: Any) -> float | None:
+    """
+    Convert a raw feature value to a JSON-safe float,
+    returning None for missing values.
+    """
+
+    if value is None:
+        return None
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if pd.isna(numeric_value):
+        return None
+
+    return numeric_value
+
+
+def _safe_str(value: Any) -> str | None:
+    """
+    Convert a raw feature value to a JSON-safe string,
+    returning None for missing values.
+    """
+
+    if value is None:
+        return None
+
+    if pd.isna(value):
+        return None
+
+    return str(value)
 
 
 def validate_customer_ids(
@@ -413,6 +464,190 @@ def demo_customers(
             status_code=500,
             detail=(
                 "Could not load demo customers: "
+                f"{exc}"
+            ),
+        ) from exc
+
+
+@app.get(
+    "/demo/customers/{customer_id}",
+    response_model=CustomerSummaryResponse,
+)
+def demo_customer_summary(
+    customer_id: int
+):
+    """
+    Return a human-readable feature summary for a
+    single demo customer.
+    """
+
+    try:
+        demo_data = get_demo_data()
+
+        if (
+            customer_id
+            not in demo_data[
+                "common_id_set"
+            ]
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Customer was not found "
+                    "in all required demo "
+                    "feature sources."
+                ),
+            )
+
+        application_row = (
+            demo_data["application"]
+            .loc[
+                demo_data[
+                    "application"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .iloc[0]
+        )
+
+        bureau_row = (
+            demo_data["bureau"]
+            .loc[
+                demo_data[
+                    "bureau"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .iloc[0]
+        )
+
+        previous_row = (
+            demo_data["previous"]
+            .loc[
+                demo_data[
+                    "previous"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .iloc[0]
+        )
+
+        installments_row = (
+            demo_data["installments"]
+            .loc[
+                demo_data[
+                    "installments"
+                ]["SK_ID_CURR"]
+                == customer_id
+            ]
+            .iloc[0]
+        )
+
+        schema = get_runtime_schema()
+
+        days_employed_sentinel = schema.get(
+            "days_employed_sentinel",
+            365243,
+        )
+
+        days_birth = application_row.get(
+            "DAYS_BIRTH"
+        )
+
+        age_years = None
+
+        if pd.notna(days_birth):
+            age_years = round(
+                abs(float(days_birth)) / 365.25,
+                1,
+            )
+
+        days_employed = application_row.get(
+            "DAYS_EMPLOYED"
+        )
+
+        employment_years = None
+
+        if (
+            pd.notna(days_employed)
+            and float(days_employed)
+            != days_employed_sentinel
+        ):
+            employment_years = round(
+                abs(float(days_employed)) / 365.25,
+                1,
+            )
+
+        return CustomerSummaryResponse(
+            SK_ID_CURR=customer_id,
+            income_total=_safe_float(
+                application_row.get(
+                    "AMT_INCOME_TOTAL"
+                )
+            ),
+            credit_amount=_safe_float(
+                application_row.get(
+                    "AMT_CREDIT"
+                )
+            ),
+            annuity_amount=_safe_float(
+                application_row.get(
+                    "AMT_ANNUITY"
+                )
+            ),
+            goods_price=_safe_float(
+                application_row.get(
+                    "AMT_GOODS_PRICE"
+                )
+            ),
+            age_years=age_years,
+            employment_years=employment_years,
+            education_type=_safe_str(
+                application_row.get(
+                    "NAME_EDUCATION_TYPE"
+                )
+            ),
+            income_type=_safe_str(
+                application_row.get(
+                    "NAME_INCOME_TYPE"
+                )
+            ),
+            family_status=_safe_str(
+                application_row.get(
+                    "NAME_FAMILY_STATUS"
+                )
+            ),
+            has_bureau_history=bool(
+                pd.notna(
+                    bureau_row.get(
+                        "BUREAU_LOAN_COUNT"
+                    )
+                )
+            ),
+            has_previous_application_history=bool(
+                pd.notna(
+                    previous_row.get(
+                        "PREV_APPLICATION_COUNT"
+                    )
+                )
+            ),
+            has_installment_history=bool(
+                pd.notna(
+                    installments_row.get(
+                        "INST_PAYMENT_RECORD_COUNT"
+                    )
+                )
+            ),
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not load customer summary: "
                 f"{exc}"
             ),
         ) from exc

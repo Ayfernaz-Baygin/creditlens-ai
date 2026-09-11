@@ -433,6 +433,46 @@ button {
   cursor: not-allowed;
 }
 
+.profile-card {
+  margin-top: 24px;
+  padding: 22px;
+  border: 1px solid #dfe6f2;
+  border-radius: 12px;
+  background: white;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 14px 20px;
+  margin-top: 14px;
+}
+
+.profile-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.profile-item span {
+  color: #7c8798;
+  font-size: 11px;
+}
+
+.profile-item strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+@media (max-width: 480px) {
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .prediction-result {
   margin-top: 24px;
   padding: 22px;
