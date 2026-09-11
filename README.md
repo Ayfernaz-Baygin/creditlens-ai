@@ -2,7 +2,7 @@
 
 CreditLens AI is an explainable credit risk modeling and decision-support research project built on the Home Credit Default Risk dataset.
 
-The project implements an end-to-end machine learning workflow covering data understanding, relational feature engineering, baseline modeling, gradient boosting, explainability, fairness auditing, cross-validation, model artifact generation, and inference.
+The project implements an end-to-end machine learning workflow covering data understanding, relational feature engineering, baseline modeling, gradient boosting, explainability, fairness auditing, cross-validation, model artifact generation, reusable inference, automated testing, and FastAPI-based model serving.
 
 The current primary research model is a gender-free CatBoost classifier that excludes `CODE_GENDER` from the predictive feature set.
 
@@ -22,7 +22,8 @@ The current primary research model is a gender-free CatBoost classifier that exc
 - Audit model performance across demographic groups
 - Reduce training-serving skew through shared feature-engineering code
 - Export a reusable trained model and inference pipeline
-- Support future API and interactive dashboard integration
+- Serve model predictions through a FastAPI API
+- Support future interactive dashboard integration
 
 ---
 
@@ -53,11 +54,11 @@ The main training dataset contains:
 
 ## Relational Feature Engineering
 
-Customer-level features were generated from:
+Customer-level features were generated from multiple relational data sources.
 
-### Bureau history
+### Bureau History
 
-Examples:
+Examples include:
 
 - bureau loan count
 - average and maximum debt
@@ -65,9 +66,9 @@ Examples:
 - credit activity status
 - credit history timing information
 
-### Previous applications
+### Previous Applications
 
-Examples:
+Examples include:
 
 - previous application count
 - approval and refusal rates
@@ -75,9 +76,9 @@ Examples:
 - credit-to-application ratios
 - payment term statistics
 
-### Installment payments
+### Installment Payments
 
-Examples:
+Examples include:
 
 - late payment rates
 - days past due statistics
@@ -97,7 +98,7 @@ The final predictive matrix contains:
 
 ## Model Development
 
-Three major model configurations were evaluated using the same development validation framework.
+Three major model configurations were evaluated using the same development-validation framework.
 
 | Model | ROC-AUC | PR-AUC | F1 @ 0.50 |
 |---|---:|---:|---:|
@@ -130,14 +131,14 @@ The predictive performance loss was limited, so the gender-free model was retain
 
 The primary gender-free CatBoost model was evaluated using 3-fold stratified cross-validation.
 
-### Mean CV performance
+### Mean CV Performance
 
 - ROC-AUC: **0.7779 ± 0.0012**
 - PR-AUC: **0.2685 ± 0.0050**
 - F1 @ 0.50: **0.3003 ± 0.0010**
 - Recall @ 0.50: **0.6395 ± 0.0071**
 
-### Out-of-Fold performance
+### Out-of-Fold Performance
 
 - ROC-AUC: **0.7779**
 - PR-AUC: **0.2684**
@@ -145,6 +146,8 @@ The primary gender-free CatBoost model was evaluated using 3-fold stratified cro
 - Recall: **0.6395**
 
 The small variation between folds indicates relatively stable model performance across different stratified partitions.
+
+The out-of-fold evaluation is used as a stability estimate rather than as a completely independent untouched test set because model architecture and training configuration were selected during development.
 
 ---
 
@@ -154,7 +157,7 @@ The model output is treated as a **risk score** rather than a calibrated probabi
 
 Different operating thresholds produce different precision-recall trade-offs.
 
-For example, development experiments showed:
+Development experiments showed that:
 
 - lower thresholds increase recall
 - higher thresholds increase precision
@@ -185,6 +188,8 @@ Relational financial-history features account for a substantial portion of total
 
 SHAP analysis is used to evaluate both feature importance and the direction of model effects.
 
+These explanations describe model behavior and should not be interpreted as causal relationships.
+
 ---
 
 ## Fairness Audit
@@ -201,7 +206,7 @@ However, threshold-dependent differences were observed:
 - False-positive-rate gap: approximately **7.0 percentage points**
 - False-negative-rate gap: approximately **6.9 percentage points**
 
-A very small `XNA` group was preserved in raw audit outputs but excluded from headline fairness gap calculations because of insufficient sample size.
+A very small `XNA` group was preserved in raw audit outputs but excluded from headline fairness-gap calculations because of insufficient sample size.
 
 These results are treated as diagnostic measurements rather than proof that the model is fair or unfair.
 
@@ -213,3 +218,383 @@ The final research model is stored as:
 
 ```text
 models/creditlens_catboost_gender_free.cbm
+```
+
+The final model was trained on all **307,511 labeled training rows**.
+
+Model configuration:
+
+- CatBoostClassifier
+- 1,470 trees
+- learning rate: 0.03
+- depth: 7
+- L2 leaf regularization: 5
+- balanced class weighting
+- random seed: 42
+- gender-free predictive feature set
+
+Additional model artifacts:
+
+```text
+models/creditlens_feature_schema.json
+models/creditlens_model_metadata.json
+```
+
+The schema stores the exact ordered model feature contract, categorical and numeric features, excluded fields, missing-value handling, and engineered feature settings.
+
+The metadata file stores training configuration, model information, validation metrics, and inference metadata.
+
+---
+
+## Shared Feature Engineering
+
+Production inference uses the same shared feature-engineering implementation as the validated model workflow.
+
+The main feature-engineering module is:
+
+```text
+src/feature_engineering.py
+```
+
+It is responsible for:
+
+- merging application and customer-level relational features
+- checking customer identifiers
+- detecting duplicate relational rows
+- creating history-presence flags
+- handling the `DAYS_EMPLOYED` sentinel value
+- enforcing the saved feature schema
+- preparing categorical missing values
+- preserving exact feature order
+
+This reduces training-serving skew between experimentation and inference.
+
+---
+
+## Command-Line Inference
+
+The project includes a reusable command-line inference pipeline:
+
+```text
+src/inference.py
+```
+
+Example:
+
+```bash
+python src/inference.py \
+  --application data/raw/application_test.csv \
+  --bureau data/interim/bureau_customer_features.csv \
+  --previous data/interim/previous_application_customer_features.csv \
+  --installments data/interim/installments_customer_features.csv \
+  --output reports/predictions.csv
+```
+
+The inference pipeline expects:
+
+- application-level customer data
+- already aggregated customer-level bureau features
+- already aggregated previous-application features
+- already aggregated installment-payment features
+
+The current production inference layer does not aggregate the original multi-million-row relational raw tables during each prediction request.
+
+---
+
+## FastAPI Inference API
+
+CreditLens AI includes a FastAPI-based model-serving layer.
+
+The API entry point is:
+
+```text
+src/api.py
+```
+
+Start the API locally with:
+
+```bash
+uvicorn src.api:app --reload
+```
+
+The API will run at:
+
+```text
+http://127.0.0.1:8000
+```
+
+Interactive Swagger documentation is available at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+### Available Endpoints
+
+#### `GET /`
+
+Returns basic API status and version information.
+
+#### `GET /health`
+
+Checks whether the required model, schema, and metadata artifacts are available.
+
+#### `GET /model-info`
+
+Returns information about the deployed research model, including:
+
+- model type
+- training row count
+- feature count
+- categorical and numeric feature counts
+- excluded sensitive feature
+- training iterations
+- development-validation metrics
+- out-of-fold metrics
+- risk-score interpretation information
+
+#### `POST /predict`
+
+Generates a customer-level credit risk score from:
+
+- application-level features
+- aggregated bureau features
+- aggregated previous-application features
+- aggregated installment-payment features
+
+Example response:
+
+```json
+{
+  "SK_ID_CURR": 100001,
+  "risk_score": 0.346927880706,
+  "interpretation": "Risk score from the class-balanced CatBoost model. This value is not a calibrated probability of default."
+}
+```
+
+The API validates that relational feature records belong to the same customer.
+
+The trained CatBoost model and feature schema are cached in memory and reused across requests instead of being reloaded from disk for every prediction.
+
+The returned `risk_score` must not be interpreted as a calibrated default probability.
+
+---
+
+## API Regression Check
+
+A smoke-test script is included:
+
+```text
+src/api_smoke_test.py
+```
+
+It selects a customer present in all required feature sources, sends the customer data to the live FastAPI `/predict` endpoint, and compares the returned risk score against the previously validated inference output.
+
+Validated result:
+
+```text
+Customer: 100001
+
+Expected score: 0.346927880706
+API score:      0.346927880706
+Difference:     0.000000000000
+Scores match:   True
+
+API regression check PASSED.
+```
+
+This verifies that the API-serving layer preserves the validated model output.
+
+---
+
+## Automated Tests
+
+The project currently contains **20 automated tests**.
+
+The test suite covers:
+
+- feature merging
+- customer-history flags
+- `DAYS_EMPLOYED` sentinel handling
+- model feature-schema enforcement
+- categorical missing-value handling
+- missing-feature validation
+- unexpected-feature validation
+- duplicate customer-row detection
+- customer-ID validation
+- saved model loading
+- model artifact availability
+- inference output contracts
+- NaN prediction protection
+- FastAPI root endpoint
+- FastAPI health endpoint
+- model-information endpoint
+- prediction endpoint behavior
+- mismatched customer-ID rejection
+
+Run all tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Current validated result:
+
+```text
+Ran 20 tests
+
+OK
+```
+
+---
+
+## Project Structure
+
+```text
+creditlens-ai/
+│
+├── data/
+│   ├── raw/
+│   ├── interim/
+│   └── processed/
+│
+├── models/
+│   ├── creditlens_catboost_gender_free.cbm
+│   ├── creditlens_feature_schema.json
+│   └── creditlens_model_metadata.json
+│
+├── notebooks/
+│   ├── 01_data_understanding.ipynb
+│   ├── 02_baseline_model.ipynb
+│   ├── 03_relational_feature_engineering.ipynb
+│   ├── 04_boosting_model.ipynb
+│   ├── 05_final_validation.ipynb
+│   └── 06_final_model.ipynb
+│
+├── reports/
+│
+├── src/
+│   ├── api.py
+│   ├── api_smoke_test.py
+│   ├── feature_engineering.py
+│   └── inference.py
+│
+├── tests/
+│   ├── test_api.py
+│   ├── test_feature_engineering.py
+│   └── test_inference.py
+│
+├── .gitignore
+├── README.md
+└── requirements.txt
+```
+
+---
+
+## Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Ayfernaz-Baygin/creditlens-ai.git
+cd creditlens-ai
+```
+
+Create a virtual environment:
+
+```bash
+python -m venv .venv
+```
+
+Activate it on Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Technology Stack
+
+The project currently uses:
+
+- Python
+- pandas
+- NumPy
+- scikit-learn
+- LightGBM
+- CatBoost
+- SHAP
+- Jupyter
+- FastAPI
+- Pydantic
+- Uvicorn
+- HTTPX
+- unittest
+- Git
+- GitHub
+
+---
+
+## Current Status
+
+The following major components are complete:
+
+- data understanding
+- baseline logistic regression
+- relational feature engineering
+- LightGBM modeling
+- CatBoost modeling
+- threshold analysis
+- cost-sensitive analysis
+- feature importance analysis
+- SHAP analysis
+- fairness-oriented gender ablation
+- post-hoc fairness audit
+- stratified cross-validation
+- out-of-fold evaluation
+- final gender-free model training
+- model artifact export
+- reusable feature-engineering pipeline
+- reusable command-line inference
+- automated test suite
+- FastAPI inference service
+- Swagger API documentation
+- API regression verification
+
+---
+
+## Future Work
+
+Planned extensions include:
+
+- interactive frontend/dashboard
+- human-vs-model decision analysis
+- probability calibration
+- extended fairness analysis
+- Docker containerization
+- continuous integration with GitHub Actions
+- experiment tracking
+- model and data versioning
+- production monitoring
+- deployment to a hosted environment
+
+---
+
+## Research and Responsible-Use Note
+
+CreditLens AI is an educational and research project.
+
+Credit decisions can have significant consequences for individuals and may be subject to legal, regulatory, ethical, and organizational requirements.
+
+The project therefore treats machine-learning output as decision-support information rather than an autonomous lending decision.
+
+Sensitive attributes are not used by the primary predictive model, but their exclusion alone does not guarantee fairness because correlated proxy variables and threshold-dependent disparities may still exist.
+
+Model outputs should be evaluated together with calibration, fairness analysis, human oversight, domain expertise, and applicable regulatory requirements.
