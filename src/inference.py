@@ -8,9 +8,6 @@ import pandas as pd
 from catboost import CatBoostClassifier
 
 
-# Support both:
-# python -m src.inference
-# python src/inference.py
 try:
     from src.feature_engineering import build_model_matrix
 except ModuleNotFoundError:
@@ -69,23 +66,27 @@ def predict_risk_scores(
     previous_df: pd.DataFrame,
     installments_df: pd.DataFrame,
     model_path: Path = DEFAULT_MODEL_PATH,
-    schema_path: Path = DEFAULT_SCHEMA_PATH
+    schema_path: Path = DEFAULT_SCHEMA_PATH,
+    model: CatBoostClassifier | None = None,
+    schema: dict | None = None,
 ) -> pd.DataFrame:
     """
     Generate CreditLens risk scores.
 
-    The feature-engineering and model-matrix logic is
-    delegated to src.feature_engineering so training
-    and inference can share the same transformation code.
+    A preloaded model and schema can optionally be supplied.
+    This allows API requests to reuse artifacts already held
+    in memory instead of reloading them from disk.
     """
 
-    schema = load_schema(
-        schema_path
-    )
+    if schema is None:
+        schema = load_schema(
+            schema_path
+        )
 
-    model = load_model(
-        model_path
-    )
+    if model is None:
+        model = load_model(
+            model_path
+        )
 
     customer_ids, X = build_model_matrix(
         application_df=application_df,
@@ -104,14 +105,12 @@ def predict_risk_scores(
             "Model produced NaN risk scores."
         )
 
-    predictions = pd.DataFrame(
+    return pd.DataFrame(
         {
             "SK_ID_CURR": customer_ids.values,
             "risk_score": risk_scores
         }
     )
-
-    return predictions
 
 
 def main() -> None:
