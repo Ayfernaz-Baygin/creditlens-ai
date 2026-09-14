@@ -208,6 +208,28 @@ button {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.dashboard-side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quick-action-secondary {
+  background: white;
+  border: 1px solid #d7deea;
+  color: #4f73df;
+}
+
+.quick-action-secondary:hover {
+  background: #f6f8fc;
+}
+
 .section-subheading {
   margin: 24px 0 10px;
   color: #566177;

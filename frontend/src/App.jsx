@@ -310,7 +310,18 @@ function App() {
   }, [analysisOpen, selectedCustomer]);
 
   useEffect(() => {
-    if (activeView !== "fairness") {
+    const fairnessRelevantView =
+      activeView === "fairness" ||
+      activeView === "dashboard";
+
+    // Fetch once per session and cache in state; both
+    // the Fairness page and the Dashboard snapshot
+    // share this result instead of re-requesting it.
+    if (
+      !fairnessRelevantView ||
+      fairnessSummary ||
+      loadingFairness
+    ) {
       return;
     }
 
@@ -929,77 +940,390 @@ function App() {
     </div>
   );
 
-  const modelPanel = (
-    <div className="panel model-panel">
+  const hasLastAnalysis = Boolean(prediction);
+
+  const lastAnalysisCard = (
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">
+            SESSION
+          </p>
+
+          <h3>Last Analysis</h3>
+        </div>
+
+        {hasLastAnalysis && (
+          <span className="research-badge">
+            Customer #{prediction.SK_ID_CURR}
+          </span>
+        )}
+      </div>
+
+      {!hasLastAnalysis && (
+        <div className="empty-analysis">
+          <div className="empty-icon">
+            ↗
+          </div>
+
+          <h4>No analysis yet</h4>
+
+          <p>
+            No analysis has been generated
+            in this session.
+          </p>
+
+          <button
+            onClick={() =>
+              setActiveView("risk-analysis")
+            }
+          >
+            Start Risk Analysis
+          </button>
+        </div>
+      )}
+
+      {hasLastAnalysis && (
+        <>
+          <div className="score-gauge">
+            <div className="gauge-label-row">
+              <span>Model Risk Score</span>
+
+              <strong className="gauge-value">
+                {prediction.risk_score.toFixed(
+                  3
+                )}
+              </strong>
+            </div>
+
+            <div className="score-track">
+              <div
+                className="score-fill"
+                style={{
+                  width: `${Math.min(
+                    Math.max(
+                      prediction.risk_score *
+                        100,
+                      0
+                    ),
+                    100
+                  )}%`,
+                }}
+              />
+            </div>
+
+            <span
+              className={`score-band score-band-${
+                riskBand(prediction.risk_score)
+                  .key
+              }`}
+            >
+              {
+                riskBand(prediction.risk_score)
+                  .label
+              }
+            </span>
+          </div>
+
+          {customerProfile && (
+            <div className="profile-grid">
+              <div className="profile-item">
+                <span>Annual Income</span>
+                <strong>
+                  {formatCurrency(
+                    customerProfile.income_total
+                  )}
+                </strong>
+              </div>
+
+              <div className="profile-item">
+                <span>Credit Amount</span>
+                <strong>
+                  {formatCurrency(
+                    customerProfile.credit_amount
+                  )}
+                </strong>
+              </div>
+
+              <div className="profile-item">
+                <span>Age</span>
+                <strong>
+                  {formatYears(
+                    customerProfile.age_years
+                  )}
+                </strong>
+              </div>
+            </div>
+          )}
+
+          {explanation &&
+            explanation.top_features?.length >
+              0 && (
+              <div className="factor-list">
+                {explanation.top_features
+                  .slice(0, 2)
+                  .map((item) => (
+                    <div
+                      className="factor-row"
+                      key={item.feature}
+                    >
+                      <div className="factor-info">
+                        <span className="factor-name">
+                          {formatFeatureLabel(
+                            item.feature
+                          )}
+                        </span>
+                      </div>
+
+                      <div
+                        className={`factor-direction factor-direction-${item.direction}`}
+                      >
+                        <span className="factor-arrow">
+                          {directionSymbol(
+                            item.direction
+                          )}
+                        </span>
+
+                        <span>
+                          {directionLabel(
+                            item.direction
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+          <p className="result-note">
+            This is an uncalibrated model
+            score, not a probability of
+            default.
+          </p>
+
+          <button
+            className="predict-button"
+            onClick={() =>
+              setActiveView("risk-analysis")
+            }
+          >
+            View Analysis
+          </button>
+        </>
+      )}
+    </div>
+  );
+
+  const modelSnapshotCard = (
+    <div className="panel">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">
             MODEL
           </p>
 
-          <h3>Research Model</h3>
+          <h3>Model Snapshot</h3>
         </div>
       </div>
 
-      <div className="model-row">
-        <span>Algorithm</span>
+      {apiStatus === "loading" && (
+        <div className="loading-text">
+          Loading model snapshot...
+        </div>
+      )}
 
-        <strong>
-          {modelInfo?.model_type ??
-            "Loading..."}
-        </strong>
+      {apiStatus === "offline" && (
+        <div className="error-banner">
+          {error ||
+            "Model information could not be loaded."}
+        </div>
+      )}
+
+      {apiStatus === "ready" && modelInfo && (
+        <>
+          <div className="model-row">
+            <span>Model</span>
+
+            <strong>
+              {modelInfo.model_type ?? "—"}
+            </strong>
+          </div>
+
+          <div className="model-row">
+            <span>Features</span>
+
+            <strong>
+              {modelInfo.feature_count ?? "—"}
+            </strong>
+          </div>
+
+          <div className="model-row">
+            <span>OOF ROC-AUC</span>
+
+            <strong>
+              {formatMetric(oof.roc_auc)}
+            </strong>
+          </div>
+
+          <div className="model-row">
+            <span>OOF PR-AUC</span>
+
+            <strong>
+              {formatMetric(oof.pr_auc)}
+            </strong>
+          </div>
+
+          <div className="model-row">
+            <span>Trees / Iterations</span>
+
+            <strong>
+              {typeof modelInfo.iterations ===
+              "number"
+                ? modelInfo.iterations.toLocaleString(
+                    "en-US"
+                  )
+                : "—"}
+            </strong>
+          </div>
+
+          <div className="model-row">
+            <span>Predictive Inputs</span>
+
+            <strong className="excluded">
+              {modelInfo.excluded_sensitive_feature
+                ? `${modelInfo.excluded_sensitive_feature}-free`
+                : "—"}
+            </strong>
+          </div>
+        </>
+      )}
+
+      <button
+        className="predict-button"
+        onClick={() =>
+          setActiveView("model-information")
+        }
+      >
+        View Model Details
+      </button>
+    </div>
+  );
+
+  const fairnessSnapshotCard = (
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">
+            FAIRNESS
+          </p>
+
+          <h3>Fairness Diagnostics</h3>
+        </div>
       </div>
 
-      <div className="model-row">
-        <span>Trees</span>
+      <p className="panel-description">
+        Post-hoc diagnostic group differences
+      </p>
 
-        <strong>
-          {modelInfo?.iterations
-            ? modelInfo.iterations.toLocaleString(
-                "en-US"
-              )
-            : "—"}
-        </strong>
+      {loadingFairness && (
+        <div className="loading-text">
+          Loading fairness diagnostics...
+        </div>
+      )}
+
+      {fairnessError && !loadingFairness && (
+        <div className="error-banner">
+          {fairnessError}
+        </div>
+      )}
+
+      {fairnessSummary && !loadingFairness && (
+        <>
+          <div className="model-row">
+            <span>ROC-AUC Gap</span>
+
+            <strong>
+              {formatMetric(
+                fairnessSummary.gaps.roc_auc
+              )}
+            </strong>
+          </div>
+
+          <div className="model-row">
+            <span>Recall Gap</span>
+
+            <strong>
+              {formatPercent(
+                fairnessSummary.gaps.recall
+              )}
+            </strong>
+          </div>
+
+          <div className="model-row">
+            <span>
+              False Positive Rate Gap
+            </span>
+
+            <strong>
+              {formatPercent(
+                fairnessSummary.gaps
+                  .false_positive_rate
+              )}
+            </strong>
+          </div>
+        </>
+      )}
+
+      <button
+        className="predict-button"
+        onClick={() =>
+          setActiveView("fairness")
+        }
+      >
+        View Fairness Audit
+      </button>
+    </div>
+  );
+
+  const quickActionsCard = (
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">
+            SHORTCUTS
+          </p>
+
+          <h3>Quick Actions</h3>
+        </div>
       </div>
 
-      <div className="model-row">
-        <span>ROC-AUC</span>
+      <div className="quick-actions">
+        <button
+          className="predict-button"
+          onClick={() =>
+            setActiveView("risk-analysis")
+          }
+        >
+          Start Risk Analysis
+        </button>
 
-        <strong>
-          {typeof oof.roc_auc ===
-          "number"
-            ? oof.roc_auc.toFixed(4)
-            : "—"}
-        </strong>
-      </div>
+        <button
+          className="predict-button quick-action-secondary"
+          onClick={() =>
+            setActiveView("model-information")
+          }
+        >
+          View Model Information
+        </button>
 
-      <div className="model-row">
-        <span>PR-AUC</span>
-
-        <strong>
-          {typeof oof.pr_auc ===
-          "number"
-            ? oof.pr_auc.toFixed(4)
-            : "—"}
-        </strong>
-      </div>
-
-      <div className="model-row">
-        <span>
-          Sensitive Feature
-        </span>
-
-        <strong className="excluded">
-          {modelInfo
-            ?.excluded_sensitive_feature
-            ? `${modelInfo.excluded_sensitive_feature} excluded`
-            : "—"}
-        </strong>
-      </div>
-
-      <div className="notice">
-        {modelInfo?.probability_note ??
-          "Model output is an uncalibrated risk score and should not be interpreted as a probability of default."}
+        <button
+          className="predict-button quick-action-secondary"
+          onClick={() =>
+            setActiveView("fairness")
+          }
+        >
+          View Fairness Audit
+        </button>
       </div>
     </div>
   );
@@ -1194,8 +1518,13 @@ function App() {
         </section>
 
         <section className="content-grid">
-          {riskAnalysisPanel}
-          {modelPanel}
+          {lastAnalysisCard}
+
+          <div className="dashboard-side-stack">
+            {modelSnapshotCard}
+            {fairnessSnapshotCard}
+            {quickActionsCard}
+          </div>
         </section>
           </>
         )}
