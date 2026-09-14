@@ -1,0 +1,13 @@
+# Runtime-only dependencies for serving the CreditLens API.
+#
+# This intentionally excludes the notebook/training extras in
+# requirements.txt (jupyter, ipykernel, matplotlib, scikit-learn,
+# lightgbm) which are not needed to serve predictions and would
+# only bloat the backend Docker image. Versions are pinned to
+# match requirements.txt.
+numpy==2.5.2
+pandas==3.0.5
+catboost==1.2.10
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn==0.52.4

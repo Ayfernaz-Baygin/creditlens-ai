@@ -1,0 +1,45 @@
+# Build context for Dockerfile.backend (repository root).
+#
+# models/ and reports/ are intentionally NOT excluded here --
+# the backend image needs the trained model artifacts and the
+# fairness audit CSV reports.
+
+# VCS / IDE / OS
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Python
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+
+# Notebooks / experimentation
+notebooks
+.ipynb_checkpoints
+
+# Frontend (has its own build context under frontend/)
+frontend/node_modules
+frontend/dist
+
+# Raw and interim Home Credit datasets: large, not part of the
+# repo, mounted read-only at runtime instead of baked into the
+# image.
+data/raw
+data/interim
+data/processed
+
+# Logs
+*.log
+
+# Docker itself
+docker-compose.yml
+compose.yaml
+Dockerfile*
+.dockerignore

@@ -1,0 +1,28 @@
+# CreditLens AI backend (FastAPI + CatBoost) production image.
+#
+# Build context is the repository root. Raw/interim Home Credit
+# datasets are NOT copied into this image (see .dockerignore) --
+# they are mounted read-only at runtime via docker-compose.
+FROM python:3.13-slim
+
+WORKDIR /app
+
+COPY requirements-backend.txt ./
+RUN pip install --no-cache-dir -r requirements-backend.txt
+
+# Application code and the artifacts required to serve it:
+# trained model, feature schema/metadata, and the fairness
+# audit CSV reports read by GET /fairness-summary.
+COPY src ./src
+COPY models ./models
+COPY reports ./reports
+
+EXPOSE 8000
+
+# No curl in the slim base image -- use the stdlib instead of
+# pulling in an extra package just for the healthcheck.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)" || exit 1
+
+# Plain uvicorn (no --reload) for a production container.
+CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]

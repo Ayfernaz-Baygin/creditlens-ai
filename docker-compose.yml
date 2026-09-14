@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Home Credit raw/interim datasets are not in the repo and
+      # are never baked into the image (see .dockerignore) --
+      # they are mounted read-only from the host instead.
+      - ./data/raw:/app/data/raw:ro
+      - ./data/interim:/app/data/interim:ro
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
