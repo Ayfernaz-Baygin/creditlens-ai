@@ -2,12 +2,15 @@ import json
 from functools import lru_cache
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
+from catboost import Pool
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from src.feature_engineering import build_model_matrix
 from src.inference import (
     DEFAULT_MODEL_PATH,
     DEFAULT_SCHEMA_PATH,
@@ -109,6 +112,21 @@ class PredictionResponse(BaseModel):
     SK_ID_CURR: int
     risk_score: float
     interpretation: str
+
+
+class TopFeatureContribution(BaseModel):
+    feature: str
+    value: float | str | bool | None
+    shap_value: float
+    direction: str
+
+
+class ExplanationResponse(BaseModel):
+    SK_ID_CURR: int
+    risk_score: float
+    base_value: float
+    top_features: list[TopFeatureContribution]
+    disclaimer: str
 
 
 class CustomerSummaryResponse(BaseModel):
@@ -264,6 +282,78 @@ def _safe_str(value: Any) -> str | None:
         return None
 
     return str(value)
+
+
+def _json_safe_value(value: Any) -> float | str | bool | None:
+    """
+    Convert a raw model-matrix feature value (which may be a
+    numpy scalar) to a JSON-safe Python value, returning None
+    for missing/NaN values.
+    """
+
+    if isinstance(value, np.generic):
+        value = value.item()
+
+    if value is None:
+        return None
+
+    if isinstance(value, float) and np.isnan(value):
+        return None
+
+    return value
+
+
+def _load_customer_feature_frames(
+    demo_data: dict,
+    customer_id: int,
+):
+    """
+    Slice the cached demo data sources down to a single
+    customer's rows for feature engineering / inference.
+    """
+
+    application_df = (
+        demo_data["application"]
+        .loc[
+            demo_data["application"]["SK_ID_CURR"]
+            == customer_id
+        ]
+        .copy()
+    )
+
+    bureau_df = (
+        demo_data["bureau"]
+        .loc[
+            demo_data["bureau"]["SK_ID_CURR"]
+            == customer_id
+        ]
+        .copy()
+    )
+
+    previous_df = (
+        demo_data["previous"]
+        .loc[
+            demo_data["previous"]["SK_ID_CURR"]
+            == customer_id
+        ]
+        .copy()
+    )
+
+    installments_df = (
+        demo_data["installments"]
+        .loc[
+            demo_data["installments"]["SK_ID_CURR"]
+            == customer_id
+        ]
+        .copy()
+    )
+
+    return (
+        application_df,
+        bureau_df,
+        previous_df,
+        installments_df,
+    )
 
 
 def validate_customer_ids(
@@ -767,6 +857,191 @@ def demo_predict(
             status_code=500,
             detail=(
                 "Demo prediction failed: "
+                f"{exc}"
+            ),
+        ) from exc
+
+
+@app.get(
+    "/demo/explain/{customer_id}",
+    response_model=ExplanationResponse,
+)
+def demo_explain(
+    customer_id: int,
+    top_n: int = Query(
+        default=6,
+        ge=1,
+        le=20,
+    ),
+):
+    """
+    Generate a local SHAP-based explanation for a single
+    demo customer's CatBoost risk score.
+
+    This describes model behavior only. It is not a
+    causal explanation and must not be used to justify
+    a credit decision.
+    """
+
+    try:
+        demo_data = get_demo_data()
+
+        if (
+            customer_id
+            not in demo_data[
+                "common_id_set"
+            ]
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Customer was not found "
+                    "in all required demo "
+                    "feature sources."
+                ),
+            )
+
+        (
+            application_df,
+            bureau_df,
+            previous_df,
+            installments_df,
+        ) = _load_customer_feature_frames(
+            demo_data,
+            customer_id,
+        )
+
+        schema = get_runtime_schema()
+        model = get_runtime_model()
+
+        prediction = predict_risk_scores(
+            application_df=application_df,
+            bureau_df=bureau_df,
+            previous_df=previous_df,
+            installments_df=installments_df,
+            model=model,
+            schema=schema,
+        )
+
+        risk_score = float(
+            prediction.iloc[0][
+                "risk_score"
+            ]
+        )
+
+        _, X = build_model_matrix(
+            application_df=application_df,
+            bureau_df=bureau_df,
+            previous_df=previous_df,
+            installments_df=installments_df,
+            schema=schema,
+        )
+
+        categorical_indices = [
+            X.columns.get_loc(column)
+            for column in schema[
+                "categorical_features"
+            ]
+        ]
+
+        explanation_pool = Pool(
+            X,
+            cat_features=categorical_indices,
+        )
+
+        shap_matrix = model.get_feature_importance(
+            explanation_pool,
+            type="ShapValues",
+        )
+
+        # The last column of CatBoost's ShapValues
+        # output is the model's expected/base value;
+        # every other column is a per-feature
+        # contribution for this single customer row.
+        shap_row = shap_matrix[0]
+
+        base_value = float(
+            shap_row[-1]
+        )
+
+        feature_shap_values = shap_row[:-1]
+
+        customer_row = X.iloc[0]
+
+        contributions = [
+            {
+                "feature": feature_name,
+                "value": _json_safe_value(
+                    customer_row[feature_name]
+                ),
+                "shap_value": float(shap_value),
+            }
+            for feature_name, shap_value in zip(
+                X.columns,
+                feature_shap_values,
+            )
+        ]
+
+        contributions.sort(
+            key=lambda item: abs(
+                item["shap_value"]
+            ),
+            reverse=True,
+        )
+
+        top_features = []
+
+        for item in contributions[:top_n]:
+            shap_value = item["shap_value"]
+
+            if abs(shap_value) < 1e-9:
+                direction = "neutral"
+            elif shap_value > 0:
+                direction = "increases_score"
+            else:
+                direction = "decreases_score"
+
+            top_features.append(
+                TopFeatureContribution(
+                    feature=item["feature"],
+                    value=item["value"],
+                    shap_value=round(
+                        shap_value,
+                        6,
+                    ),
+                    direction=direction,
+                )
+            )
+
+        return ExplanationResponse(
+            SK_ID_CURR=customer_id,
+            risk_score=risk_score,
+            base_value=round(
+                base_value,
+                6,
+            ),
+            top_features=top_features,
+            disclaimer=(
+                "Feature contributions explain this "
+                "model prediction and do not "
+                "represent causal effects."
+            ),
+        )
+
+    except HTTPException:
+        raise
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Explanation generation failed: "
                 f"{exc}"
             ),
         ) from exc

@@ -473,6 +473,135 @@ button {
   }
 }
 
+.score-gauge {
+  margin-top: 18px;
+}
+
+.gauge-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+  color: #7c8798;
+  font-size: 11px;
+}
+
+.gauge-value {
+  color: #4f73df;
+  font-size: 24px;
+}
+
+.gauge-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: #9aa4b5;
+  font-size: 10px;
+}
+
+.score-band {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.score-band-lower {
+  background: #eef3ff;
+  color: #4f73df;
+}
+
+.score-band-moderate {
+  background: #fef3e2;
+  color: #b45309;
+}
+
+.score-band-higher {
+  background: #f3f0ff;
+  color: #6d4fd1;
+}
+
+.explanation-card {
+  margin-top: 24px;
+  padding: 22px;
+  border: 1px solid #dfe6f2;
+  border-radius: 12px;
+  background: white;
+}
+
+.explanation-card h4 {
+  margin: 6px 0 16px;
+  font-size: 15px;
+}
+
+.factor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.factor-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #edf0f5;
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.factor-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.factor-name {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.factor-value {
+  color: #7c8798;
+  font-size: 11px;
+}
+
+.factor-direction {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.factor-direction-increases_score {
+  color: #b45309;
+}
+
+.factor-direction-decreases_score {
+  color: #4f73df;
+}
+
+.factor-direction-neutral {
+  color: #7c8798;
+}
+
+.factor-arrow {
+  font-size: 14px;
+}
+
+@media (max-width: 480px) {
+  .factor-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .prediction-result {
   margin-top: 24px;
   padding: 22px;
@@ -502,15 +631,6 @@ button {
 .result-header strong {
   color: #172033;
   font-size: 20px;
-}
-
-.score-block {
-  text-align: right;
-}
-
-.score-block strong {
-  color: #4f73df;
-  font-size: 25px;
 }
 
 .score-track {

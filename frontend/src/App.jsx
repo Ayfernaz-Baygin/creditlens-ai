@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_BASE_URL = "http://127.0.0.1:8000";
@@ -23,6 +23,88 @@ function formatHistory(value) {
   return value ? "Available" : "No history";
 }
 
+function riskBand(score) {
+  if (score < 0.33) {
+    return { key: "lower", label: "Lower model score" };
+  }
+
+  if (score < 0.66) {
+    return { key: "moderate", label: "Moderate model score" };
+  }
+
+  return { key: "higher", label: "Higher model score" };
+}
+
+const FEATURE_LABELS = {
+  EXT_SOURCE_1: "External Risk Source 1",
+  EXT_SOURCE_2: "External Risk Source 2",
+  EXT_SOURCE_3: "External Risk Source 3",
+  AMT_INCOME_TOTAL: "Annual Income",
+  AMT_CREDIT: "Credit Amount",
+  AMT_ANNUITY: "Annuity Amount",
+  AMT_GOODS_PRICE: "Goods Price",
+  DAYS_BIRTH: "Age",
+  DAYS_EMPLOYED: "Employment Duration",
+  NAME_EDUCATION_TYPE: "Education",
+  NAME_INCOME_TYPE: "Income Type",
+  NAME_FAMILY_STATUS: "Family Status",
+  BUREAU_LOAN_COUNT: "Bureau Loan Count",
+  BUREAU_DEBT_MEAN: "Average Bureau Debt",
+  PREV_APPLICATION_COUNT: "Previous Application Count",
+  PREV_CREDIT_TO_APPLICATION_RATIO:
+    "Previous Credit / Application Ratio",
+  INST_PAYMENT_RECORD_COUNT: "Installment Payment Count",
+  INST_LATE_PAYMENT_RATE: "Late Payment Rate",
+};
+
+function formatFeatureLabel(featureName) {
+  return FEATURE_LABELS[featureName] ?? featureName;
+}
+
+function formatFeatureValue(value) {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  if (typeof value === "number") {
+    if (Number.isInteger(value) || Math.abs(value) >= 100) {
+      return Math.round(value).toLocaleString("en-US");
+    }
+
+    return value.toFixed(2);
+  }
+
+  return String(value);
+}
+
+function directionSymbol(direction) {
+  if (direction === "increases_score") {
+    return "↑";
+  }
+
+  if (direction === "decreases_score") {
+    return "↓";
+  }
+
+  return "→";
+}
+
+function directionLabel(direction) {
+  if (direction === "increases_score") {
+    return "Increases model score";
+  }
+
+  if (direction === "decreases_score") {
+    return "Decreases model score";
+  }
+
+  return "Neutral effect";
+}
+
 function App() {
   const [apiStatus, setApiStatus] = useState("loading");
   const [modelInfo, setModelInfo] = useState(null);
@@ -39,14 +121,32 @@ function App() {
   const [profileError, setProfileError] =
     useState("");
 
+  const [explanation, setExplanation] =
+    useState(null);
+
+  const [explanationError, setExplanationError] =
+    useState("");
+
   const [loadingCustomers, setLoadingCustomers] =
     useState(false);
 
   const [loadingProfile, setLoadingProfile] =
     useState(false);
 
+  const [loadingExplanation, setLoadingExplanation] =
+    useState(false);
+
   const [predicting, setPredicting] =
     useState(false);
+
+  const explanationRequestRef = useRef(null);
+
+  function abortPendingExplanation() {
+    if (explanationRequestRef.current) {
+      explanationRequestRef.current.abort();
+      explanationRequestRef.current = null;
+    }
+  }
 
   useEffect(() => {
     async function loadBackendData() {
@@ -157,8 +257,12 @@ function App() {
   }, [analysisOpen, selectedCustomer]);
 
   async function startAnalysis() {
+    abortPendingExplanation();
+
     setAnalysisOpen(true);
     setPrediction(null);
+    setExplanation(null);
+    setExplanationError("");
 
     if (customers.length > 0) {
       return;
@@ -197,13 +301,83 @@ function App() {
     }
   }
 
+  async function loadExplanation(customerId) {
+    abortPendingExplanation();
+
+    const controller = new AbortController();
+    explanationRequestRef.current = controller;
+
+    setLoadingExplanation(true);
+    setExplanationError("");
+    setExplanation(null);
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/demo/explain/${customerId}`,
+        {
+          signal: controller.signal,
+        }
+      );
+
+      if (!response.ok) {
+        const errorData =
+          await response.json();
+
+        throw new Error(
+          errorData.detail ??
+            "Explanation could not be loaded."
+        );
+      }
+
+      const data = await response.json();
+
+      // Only apply this response if a newer
+      // explanation request hasn't since replaced it.
+      if (
+        explanationRequestRef.current ===
+        controller
+      ) {
+        setExplanation(data);
+      }
+    } catch (err) {
+      // Aborted requests (e.g. the customer changed
+      // before this one finished) are not user-facing
+      // errors.
+      if (err?.name === "AbortError") {
+        return;
+      }
+
+      if (
+        explanationRequestRef.current ===
+        controller
+      ) {
+        setExplanationError(
+          err instanceof Error
+            ? err.message
+            : "Explanation failed."
+        );
+      }
+    } finally {
+      if (
+        explanationRequestRef.current ===
+        controller
+      ) {
+        setLoadingExplanation(false);
+      }
+    }
+  }
+
   async function runPrediction() {
     if (!selectedCustomer) {
       return;
     }
 
+    abortPendingExplanation();
+
     setPredicting(true);
     setPrediction(null);
+    setExplanation(null);
+    setExplanationError("");
     setError("");
 
     try {
@@ -227,6 +401,10 @@ function App() {
       const data = await response.json();
 
       setPrediction(data);
+
+      // Explanation is only requested once a risk
+      // score has been generated successfully.
+      loadExplanation(selectedCustomer);
     } catch (err) {
       setError(
         err instanceof Error
@@ -455,11 +633,15 @@ function App() {
                     <select
                       value={selectedCustomer}
                       onChange={(event) => {
+                        abortPendingExplanation();
+
                         setSelectedCustomer(
                           event.target.value
                         );
 
                         setPrediction(null);
+                        setExplanation(null);
+                        setExplanationError("");
                       }}
                     >
                       {customers.map(
@@ -619,7 +801,7 @@ function App() {
                   }
                 >
                   {predicting
-                    ? "Analyzing..."
+                    ? "Analyzing customer..."
                     : "Generate Risk Score"}
                 </button>
 
@@ -642,31 +824,66 @@ function App() {
                           }
                         </strong>
                       </div>
+                    </div>
 
-                      <div className="score-block">
+                    <div className="score-gauge">
+                      <div className="gauge-label-row">
                         <span>
-                          Risk Score
+                          Model Risk Score
                         </span>
 
-                        <strong>
+                        <strong className="gauge-value">
                           {prediction.risk_score.toFixed(
-                            6
+                            3
                           )}
                         </strong>
                       </div>
+
+                      <div className="score-track">
+                        <div
+                          className="score-fill"
+                          style={{
+                            width: `${Math.min(
+                              Math.max(
+                                prediction.risk_score *
+                                  100,
+                                0
+                              ),
+                              100
+                            )}%`,
+                          }}
+                        />
+                      </div>
+
+                      <div className="gauge-scale">
+                        <span>0.00</span>
+                        <span>1.00</span>
+                      </div>
+
+                      <span
+                        className={`score-band score-band-${
+                          riskBand(
+                            prediction.risk_score
+                          ).key
+                        }`}
+                      >
+                        {
+                          riskBand(
+                            prediction.risk_score
+                          ).label
+                        }
+                      </span>
                     </div>
 
-                    <div className="score-track">
-                      <div
-                        className="score-fill"
-                        style={{
-                          width: `${
-                            prediction.risk_score *
-                            100
-                          }%`,
-                        }}
-                      />
-                    </div>
+                    <p className="result-note">
+                      This is an uncalibrated model
+                      score, not a probability of
+                      default. The band above is a
+                      descriptive visualization grouping
+                      only — it is not a model
+                      validation threshold or a credit
+                      approval/rejection decision.
+                    </p>
 
                     <p className="result-note">
                       {
@@ -675,6 +892,79 @@ function App() {
                     </p>
                   </div>
                 )}
+
+                {loadingExplanation && (
+                  <div className="loading-text">
+                    Loading explanation...
+                  </div>
+                )}
+
+                {explanationError &&
+                  !loadingExplanation && (
+                    <div className="error-banner">
+                      {explanationError}
+                    </div>
+                  )}
+
+                {explanation &&
+                  !loadingExplanation && (
+                    <div className="explanation-card">
+                      <p className="eyebrow">
+                        MODEL EXPLANATION
+                      </p>
+
+                      <h4>
+                        Top Factors Influencing
+                        This Score
+                      </h4>
+
+                      <div className="factor-list">
+                        {explanation.top_features.map(
+                          (item) => (
+                            <div
+                              className="factor-row"
+                              key={item.feature}
+                            >
+                              <div className="factor-info">
+                                <span className="factor-name">
+                                  {formatFeatureLabel(
+                                    item.feature
+                                  )}
+                                </span>
+
+                                <span className="factor-value">
+                                  value:{" "}
+                                  {formatFeatureValue(
+                                    item.value
+                                  )}
+                                </span>
+                              </div>
+
+                              <div
+                                className={`factor-direction factor-direction-${item.direction}`}
+                              >
+                                <span className="factor-arrow">
+                                  {directionSymbol(
+                                    item.direction
+                                  )}
+                                </span>
+
+                                <span>
+                                  {directionLabel(
+                                    item.direction
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+
+                      <p className="result-note">
+                        {explanation.disclaimer}
+                      </p>
+                    </div>
+                  )}
               </div>
             )}
           </div>
