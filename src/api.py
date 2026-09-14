@@ -55,6 +55,36 @@ INSTALLMENTS_FEATURES_PATH = (
     / "installments_customer_features.csv"
 )
 
+FAIRNESS_MAJOR_GROUPS_PATH = (
+    PROJECT_ROOT
+    / "reports"
+    / "catboost_gender_fairness_major_groups.csv"
+)
+
+FAIRNESS_MAJOR_GROUP_GAPS_PATH = (
+    PROJECT_ROOT
+    / "reports"
+    / "catboost_gender_fairness_major_group_gaps.csv"
+)
+
+FAIRNESS_AUDIT_PATH = (
+    PROJECT_ROOT
+    / "reports"
+    / "catboost_gender_fairness_audit.csv"
+)
+
+# Maps the raw fairness-report CSV metric names onto the
+# API's response field names.
+FAIRNESS_GAP_METRIC_NAME_MAP = {
+    "positive_rate_actual": "actual_positive_rate",
+    "selection_rate": "selection_rate",
+    "precision": "precision",
+    "recall_tpr": "recall",
+    "fpr": "false_positive_rate",
+    "fnr": "false_negative_rate",
+    "roc_auc": "roc_auc",
+}
+
 
 app = FastAPI(
     title="CreditLens AI API",
@@ -127,6 +157,41 @@ class ExplanationResponse(BaseModel):
     base_value: float
     top_features: list[TopFeatureContribution]
     disclaimer: str
+
+
+class FairnessGroupMetrics(BaseModel):
+    group: str
+    sample_count: int
+    actual_positive_rate: float
+    selection_rate: float
+    precision: float
+    recall: float
+    false_positive_rate: float
+    false_negative_rate: float
+    roc_auc: float
+
+
+class FairnessGaps(BaseModel):
+    actual_positive_rate: float
+    selection_rate: float
+    precision: float
+    recall: float
+    false_positive_rate: float
+    false_negative_rate: float
+    roc_auc: float
+
+
+class FairnessExcludedGroup(BaseModel):
+    group: str
+    sample_count: int
+    reason: str
+
+
+class FairnessSummaryResponse(BaseModel):
+    groups: list[FairnessGroupMetrics]
+    gaps: FairnessGaps
+    excluded_groups: list[FairnessExcludedGroup]
+    note: str
 
 
 class CustomerSummaryResponse(BaseModel):
@@ -246,6 +311,44 @@ def get_demo_data():
         "installments": installments,
         "common_ids": common_ids,
         "common_id_set": set(common_ids),
+    }
+
+
+@lru_cache(maxsize=1)
+def get_fairness_report():
+    """
+    Load the cached gender fairness audit CSV reports
+    once for dashboard fairness-summary use.
+    """
+
+    required_files = [
+        FAIRNESS_MAJOR_GROUPS_PATH,
+        FAIRNESS_MAJOR_GROUP_GAPS_PATH,
+        FAIRNESS_AUDIT_PATH,
+    ]
+
+    missing_files = [
+        str(path)
+        for path in required_files
+        if not path.exists()
+    ]
+
+    if missing_files:
+        raise FileNotFoundError(
+            "Fairness report files are missing: "
+            + ", ".join(missing_files)
+        )
+
+    return {
+        "major_groups": pd.read_csv(
+            FAIRNESS_MAJOR_GROUPS_PATH
+        ),
+        "major_group_gaps": pd.read_csv(
+            FAIRNESS_MAJOR_GROUP_GAPS_PATH
+        ),
+        "audit": pd.read_csv(
+            FAIRNESS_AUDIT_PATH
+        ),
     }
 
 
@@ -511,6 +614,125 @@ def model_info():
                 "Could not load model "
                 "information: "
                 f"{exc}"
+            ),
+        ) from exc
+
+
+@app.get(
+    "/fairness-summary",
+    response_model=FairnessSummaryResponse,
+)
+def fairness_summary():
+    """
+    Summarize the pre-computed CODE_GENDER post-hoc
+    fairness audit reports for the dashboard.
+
+    CODE_GENDER is not a predictive model input; it is
+    used here only to audit model behavior across major
+    demographic groups after the fact.
+    """
+
+    try:
+        report = get_fairness_report()
+
+        major_groups = report["major_groups"]
+        major_group_gaps = report["major_group_gaps"]
+        audit = report["audit"]
+
+        groups = [
+            FairnessGroupMetrics(
+                group=str(row["group"]),
+                sample_count=int(row["n"]),
+                actual_positive_rate=float(
+                    row["positive_rate_actual"]
+                ),
+                selection_rate=float(
+                    row["selection_rate"]
+                ),
+                precision=float(row["precision"]),
+                recall=float(row["recall_tpr"]),
+                false_positive_rate=float(
+                    row["fpr"]
+                ),
+                false_negative_rate=float(
+                    row["fnr"]
+                ),
+                roc_auc=float(row["roc_auc"]),
+            )
+            for _, row in major_groups.iterrows()
+        ]
+
+        gap_values = {}
+
+        for _, row in major_group_gaps.iterrows():
+            metric_name = (
+                FAIRNESS_GAP_METRIC_NAME_MAP.get(
+                    row["metric"]
+                )
+            )
+
+            if metric_name is None:
+                continue
+
+            gap_values[metric_name] = float(
+                row["absolute_gap"]
+            )
+
+        gaps = FairnessGaps(**gap_values)
+
+        major_group_names = set(
+            major_groups["group"]
+        )
+
+        excluded_groups = [
+            FairnessExcludedGroup(
+                group=str(row["group"]),
+                sample_count=int(row["n"]),
+                reason=(
+                    "Sample size too small for a "
+                    "reliable headline group "
+                    "comparison."
+                ),
+            )
+            for _, row in audit.iterrows()
+            if row["group"]
+            not in major_group_names
+        ]
+
+        return FairnessSummaryResponse(
+            groups=groups,
+            gaps=gaps,
+            excluded_groups=excluded_groups,
+            note=(
+                "These metrics are post-hoc "
+                "diagnostics computed using "
+                "CODE_GENDER for audit purposes "
+                "only; CODE_GENDER is excluded "
+                "from the model's predictive "
+                "inputs. They do not establish "
+                "that the model is fair or "
+                "unfair."
+            ),
+        )
+
+    except HTTPException:
+        raise
+
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Fairness report unavailable: "
+                f"{exc}"
+            ),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not build fairness "
+                f"summary: {exc}"
             ),
         ) from exc
 

@@ -204,6 +204,85 @@ button {
   gap: 20px;
 }
 
+.content-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.section-subheading {
+  margin: 24px 0 10px;
+  color: #566177;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fairness-groups {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 18px 0;
+}
+
+.fairness-group-card {
+  padding: 18px;
+  border: 1px solid #e2e7ef;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+
+.fairness-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.fairness-group-name {
+  color: #172033;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.fairness-group-count {
+  color: #9aa4b5;
+  font-size: 11px;
+}
+
+.fairness-metric-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 0;
+  font-size: 12px;
+  color: #566177;
+}
+
+.fairness-metric-row strong {
+  color: #172033;
+}
+
+.fairness-gap-card {
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid #dfe6f2;
+  border-radius: 12px;
+  background: white;
+}
+
+.fairness-gap-card h4 {
+  margin: 4px 0 4px;
+  font-size: 15px;
+}
+
+@media (max-width: 720px) {
+  .fairness-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
 .panel {
   padding: 25px;
 }

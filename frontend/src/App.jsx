@@ -105,7 +105,51 @@ function directionLabel(direction) {
   return "Neutral effect";
 }
 
+function formatMetric(value) {
+  if (typeof value !== "number") {
+    return "—";
+  }
+
+  return value.toFixed(4);
+}
+
+function formatPercent(value) {
+  if (typeof value !== "number") {
+    return "—";
+  }
+
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+const VIEW_META = {
+  dashboard: {
+    eyebrow: "CREDIT RISK PLATFORM",
+    title: "Dashboard",
+    subtitle:
+      "Explainable machine learning for credit risk assessment.",
+  },
+  "risk-analysis": {
+    eyebrow: "CREDIT RISK PLATFORM",
+    title: "Risk Analysis",
+    subtitle:
+      "Select a customer from the demo dataset and generate a live CreditLens model risk score.",
+  },
+  "model-information": {
+    eyebrow: "CREDIT RISK PLATFORM",
+    title: "Model Information",
+    subtitle:
+      "Model contract, validation, and stability metrics.",
+  },
+  fairness: {
+    eyebrow: "CREDIT RISK PLATFORM",
+    title: "Fairness Audit",
+    subtitle:
+      "CODE_GENDER is excluded from predictive inputs and is used only for post-hoc auditing.",
+  },
+};
+
 function App() {
+  const [activeView, setActiveView] = useState("dashboard");
   const [apiStatus, setApiStatus] = useState("loading");
   const [modelInfo, setModelInfo] = useState(null);
   const [error, setError] = useState("");
@@ -137,6 +181,15 @@ function App() {
     useState(false);
 
   const [predicting, setPredicting] =
+    useState(false);
+
+  const [fairnessSummary, setFairnessSummary] =
+    useState(null);
+
+  const [fairnessError, setFairnessError] =
+    useState("");
+
+  const [loadingFairness, setLoadingFairness] =
     useState(false);
 
   const explanationRequestRef = useRef(null);
@@ -255,6 +308,60 @@ function App() {
       cancelled = true;
     };
   }, [analysisOpen, selectedCustomer]);
+
+  useEffect(() => {
+    if (activeView !== "fairness") {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadFairnessSummary() {
+      setLoadingFairness(true);
+      setFairnessError("");
+      setFairnessSummary(null);
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/fairness-summary`
+        );
+
+        if (!response.ok) {
+          const errorData =
+            await response.json();
+
+          throw new Error(
+            errorData.detail ??
+              "Fairness summary could not be loaded."
+          );
+        }
+
+        const data = await response.json();
+
+        if (!cancelled) {
+          setFairnessSummary(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setFairnessError(
+            err instanceof Error
+              ? err.message
+              : "Fairness summary failed."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingFairness(false);
+        }
+      }
+    }
+
+    loadFairnessSummary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView]);
 
   async function startAnalysis() {
     abortPendingExplanation();
@@ -419,6 +526,484 @@ function App() {
   const oof =
     modelInfo?.stability_cv_oof ?? {};
 
+  const riskAnalysisPanel = (
+    <div className="panel prediction-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">
+            NEW ANALYSIS
+          </p>
+
+          <h3>
+            Customer Risk Analysis
+          </h3>
+        </div>
+
+        <span className="research-badge">
+          Decision Support
+        </span>
+      </div>
+
+      <p className="panel-description">
+        Select a customer from the demo
+        dataset and generate a live
+        CreditLens model risk score.
+      </p>
+
+      {!analysisOpen && (
+        <div className="empty-analysis">
+          <div className="empty-icon">
+            ↗
+          </div>
+
+          <h4>
+            No customer selected
+          </h4>
+
+          <p>
+            Start a risk analysis to load
+            customers and generate a live
+            FastAPI prediction.
+          </p>
+
+          <button
+            onClick={startAnalysis}
+            disabled={
+              apiStatus !== "ready"
+            }
+          >
+            Start Risk Analysis
+          </button>
+        </div>
+      )}
+
+      {analysisOpen && (
+        <div className="analysis-box">
+          <div className="analysis-field">
+            <label>
+              Demo Customer
+            </label>
+
+            {loadingCustomers ? (
+              <div className="loading-text">
+                Loading customers...
+              </div>
+            ) : (
+              <select
+                value={selectedCustomer}
+                onChange={(event) => {
+                  abortPendingExplanation();
+
+                  setSelectedCustomer(
+                    event.target.value
+                  );
+
+                  setPrediction(null);
+                  setExplanation(null);
+                  setExplanationError("");
+                }}
+              >
+                {customers.map(
+                  (customerId) => (
+                    <option
+                      key={customerId}
+                      value={customerId}
+                    >
+                      Customer #{customerId}
+                    </option>
+                  )
+                )}
+              </select>
+            )}
+          </div>
+
+          {loadingProfile && (
+            <div className="loading-text">
+              Loading customer profile...
+            </div>
+          )}
+
+          {profileError && (
+            <div className="error-banner">
+              {profileError}
+            </div>
+          )}
+
+          {customerProfile && !loadingProfile && (
+            <div className="profile-card">
+              <p className="eyebrow">
+                CUSTOMER PROFILE
+              </p>
+
+              <div className="profile-grid">
+                <div className="profile-item">
+                  <span>Annual Income</span>
+                  <strong>
+                    {formatCurrency(
+                      customerProfile.income_total
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Credit Amount</span>
+                  <strong>
+                    {formatCurrency(
+                      customerProfile.credit_amount
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Annuity</span>
+                  <strong>
+                    {formatCurrency(
+                      customerProfile.annuity_amount
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Goods Price</span>
+                  <strong>
+                    {formatCurrency(
+                      customerProfile.goods_price
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Age</span>
+                  <strong>
+                    {formatYears(
+                      customerProfile.age_years
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>
+                    Employment Duration
+                  </span>
+                  <strong>
+                    {formatYears(
+                      customerProfile.employment_years
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Education</span>
+                  <strong>
+                    {customerProfile.education_type ??
+                      "—"}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Income Type</span>
+                  <strong>
+                    {customerProfile.income_type ??
+                      "—"}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Family Status</span>
+                  <strong>
+                    {customerProfile.family_status ??
+                      "—"}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>Bureau History</span>
+                  <strong>
+                    {formatHistory(
+                      customerProfile.has_bureau_history
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>
+                    Previous Applications
+                  </span>
+                  <strong>
+                    {formatHistory(
+                      customerProfile.has_previous_application_history
+                    )}
+                  </strong>
+                </div>
+
+                <div className="profile-item">
+                  <span>
+                    Installment History
+                  </span>
+                  <strong>
+                    {formatHistory(
+                      customerProfile.has_installment_history
+                    )}
+                  </strong>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <button
+            className="predict-button"
+            onClick={runPrediction}
+            disabled={
+              predicting ||
+              loadingCustomers ||
+              !selectedCustomer
+            }
+          >
+            {predicting
+              ? "Analyzing customer..."
+              : "Generate Risk Score"}
+          </button>
+
+          {prediction && (
+            <div className="prediction-result">
+              <p className="eyebrow">
+                MODEL RESULT
+              </p>
+
+              <div className="result-header">
+                <div>
+                  <span>
+                    Customer
+                  </span>
+
+                  <strong>
+                    #
+                    {
+                      prediction.SK_ID_CURR
+                    }
+                  </strong>
+                </div>
+              </div>
+
+              <div className="score-gauge">
+                <div className="gauge-label-row">
+                  <span>
+                    Model Risk Score
+                  </span>
+
+                  <strong className="gauge-value">
+                    {prediction.risk_score.toFixed(
+                      3
+                    )}
+                  </strong>
+                </div>
+
+                <div className="score-track">
+                  <div
+                    className="score-fill"
+                    style={{
+                      width: `${Math.min(
+                        Math.max(
+                          prediction.risk_score *
+                            100,
+                          0
+                        ),
+                        100
+                      )}%`,
+                    }}
+                  />
+                </div>
+
+                <div className="gauge-scale">
+                  <span>0.00</span>
+                  <span>1.00</span>
+                </div>
+
+                <span
+                  className={`score-band score-band-${
+                    riskBand(
+                      prediction.risk_score
+                    ).key
+                  }`}
+                >
+                  {
+                    riskBand(
+                      prediction.risk_score
+                    ).label
+                  }
+                </span>
+              </div>
+
+              <p className="result-note">
+                This is an uncalibrated model
+                score, not a probability of
+                default. The band above is a
+                descriptive visualization grouping
+                only — it is not a model
+                validation threshold or a credit
+                approval/rejection decision.
+              </p>
+
+              <p className="result-note">
+                {
+                  prediction.interpretation
+                }
+              </p>
+            </div>
+          )}
+
+          {loadingExplanation && (
+            <div className="loading-text">
+              Loading explanation...
+            </div>
+          )}
+
+          {explanationError &&
+            !loadingExplanation && (
+              <div className="error-banner">
+                {explanationError}
+              </div>
+            )}
+
+          {explanation &&
+            !loadingExplanation && (
+              <div className="explanation-card">
+                <p className="eyebrow">
+                  MODEL EXPLANATION
+                </p>
+
+                <h4>
+                  Top Factors Influencing
+                  This Score
+                </h4>
+
+                <div className="factor-list">
+                  {explanation.top_features.map(
+                    (item) => (
+                      <div
+                        className="factor-row"
+                        key={item.feature}
+                      >
+                        <div className="factor-info">
+                          <span className="factor-name">
+                            {formatFeatureLabel(
+                              item.feature
+                            )}
+                          </span>
+
+                          <span className="factor-value">
+                            value:{" "}
+                            {formatFeatureValue(
+                              item.value
+                            )}
+                          </span>
+                        </div>
+
+                        <div
+                          className={`factor-direction factor-direction-${item.direction}`}
+                        >
+                          <span className="factor-arrow">
+                            {directionSymbol(
+                              item.direction
+                            )}
+                          </span>
+
+                          <span>
+                            {directionLabel(
+                              item.direction
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+
+                <p className="result-note">
+                  {explanation.disclaimer}
+                </p>
+              </div>
+            )}
+        </div>
+      )}
+    </div>
+  );
+
+  const modelPanel = (
+    <div className="panel model-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">
+            MODEL
+          </p>
+
+          <h3>Research Model</h3>
+        </div>
+      </div>
+
+      <div className="model-row">
+        <span>Algorithm</span>
+
+        <strong>
+          {modelInfo?.model_type ??
+            "Loading..."}
+        </strong>
+      </div>
+
+      <div className="model-row">
+        <span>Trees</span>
+
+        <strong>
+          {modelInfo?.iterations
+            ? modelInfo.iterations.toLocaleString(
+                "en-US"
+              )
+            : "—"}
+        </strong>
+      </div>
+
+      <div className="model-row">
+        <span>ROC-AUC</span>
+
+        <strong>
+          {typeof oof.roc_auc ===
+          "number"
+            ? oof.roc_auc.toFixed(4)
+            : "—"}
+        </strong>
+      </div>
+
+      <div className="model-row">
+        <span>PR-AUC</span>
+
+        <strong>
+          {typeof oof.pr_auc ===
+          "number"
+            ? oof.pr_auc.toFixed(4)
+            : "—"}
+        </strong>
+      </div>
+
+      <div className="model-row">
+        <span>
+          Sensitive Feature
+        </span>
+
+        <strong className="excluded">
+          {modelInfo
+            ?.excluded_sensitive_feature
+            ? `${modelInfo.excluded_sensitive_feature} excluded`
+            : "—"}
+        </strong>
+      </div>
+
+      <div className="notice">
+        {modelInfo?.probability_note ??
+          "Model output is an uncalibrated risk score and should not be interpreted as a probability of default."}
+      </div>
+    </div>
+  );
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -434,19 +1019,55 @@ function App() {
         </div>
 
         <nav className="nav">
-          <button className="nav-item active">
+          <button
+            className={`nav-item ${
+              activeView === "dashboard"
+                ? "active"
+                : ""
+            }`}
+            onClick={() =>
+              setActiveView("dashboard")
+            }
+          >
             Dashboard
           </button>
 
-          <button className="nav-item">
+          <button
+            className={`nav-item ${
+              activeView === "risk-analysis"
+                ? "active"
+                : ""
+            }`}
+            onClick={() =>
+              setActiveView("risk-analysis")
+            }
+          >
             Risk Analysis
           </button>
 
-          <button className="nav-item">
+          <button
+            className={`nav-item ${
+              activeView === "model-information"
+                ? "active"
+                : ""
+            }`}
+            onClick={() =>
+              setActiveView("model-information")
+            }
+          >
             Model Information
           </button>
 
-          <button className="nav-item">
+          <button
+            className={`nav-item ${
+              activeView === "fairness"
+                ? "active"
+                : ""
+            }`}
+            onClick={() =>
+              setActiveView("fairness")
+            }
+          >
             Fairness
           </button>
         </nav>
@@ -460,14 +1081,15 @@ function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">
-              CREDIT RISK PLATFORM
+              {VIEW_META[activeView].eyebrow}
             </p>
 
-            <h2>Dashboard</h2>
+            <h2>
+              {VIEW_META[activeView].title}
+            </h2>
 
             <p className="subtitle">
-              Explainable machine learning for
-              credit risk assessment.
+              {VIEW_META[activeView].subtitle}
             </p>
           </div>
 
@@ -497,12 +1119,16 @@ function App() {
           </div>
         </header>
 
-        {error && (
-          <div className="error-banner">
-            {error}
-          </div>
-        )}
+        {error &&
+          (activeView === "dashboard" ||
+            activeView === "risk-analysis") && (
+            <div className="error-banner">
+              {error}
+            </div>
+          )}
 
+        {activeView === "dashboard" && (
+          <>
         <section className="stats-grid">
           <div className="stat-card">
             <span>Primary Model</span>
@@ -568,480 +1194,453 @@ function App() {
         </section>
 
         <section className="content-grid">
-          <div className="panel prediction-panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">
-                  NEW ANALYSIS
-                </p>
+          {riskAnalysisPanel}
+          {modelPanel}
+        </section>
+          </>
+        )}
 
-                <h3>
-                  Customer Risk Analysis
-                </h3>
-              </div>
+        {activeView === "risk-analysis" && (
+          <section className="content-grid content-grid-single">
+            {riskAnalysisPanel}
+          </section>
+        )}
 
-              <span className="research-badge">
-                Decision Support
-              </span>
-            </div>
+        {activeView === "model-information" && (
+          <section className="content-grid content-grid-single">
+            <div className="panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">
+                    MODEL CONTRACT
+                  </p>
 
-            <p className="panel-description">
-              Select a customer from the demo
-              dataset and generate a live
-              CreditLens model risk score.
-            </p>
-
-            {!analysisOpen && (
-              <div className="empty-analysis">
-                <div className="empty-icon">
-                  ↗
+                  <h3>Model Information</h3>
                 </div>
-
-                <h4>
-                  No customer selected
-                </h4>
-
-                <p>
-                  Start a risk analysis to load
-                  customers and generate a live
-                  FastAPI prediction.
-                </p>
-
-                <button
-                  onClick={startAnalysis}
-                  disabled={
-                    apiStatus !== "ready"
-                  }
-                >
-                  Start Risk Analysis
-                </button>
               </div>
-            )}
 
-            {analysisOpen && (
-              <div className="analysis-box">
-                <div className="analysis-field">
-                  <label>
-                    Demo Customer
-                  </label>
+              {apiStatus === "loading" && (
+                <div className="loading-text">
+                  Loading model information...
+                </div>
+              )}
 
-                  {loadingCustomers ? (
-                    <div className="loading-text">
-                      Loading customers...
+              {apiStatus === "offline" && (
+                <div className="error-banner">
+                  {error ||
+                    "Model information could not be loaded."}
+                </div>
+              )}
+
+              {apiStatus === "ready" &&
+                modelInfo && (
+                  <>
+                    <div className="profile-grid">
+                      <div className="profile-item">
+                        <span>Model Name</span>
+                        <strong>
+                          {modelInfo.model_name ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Model Type</span>
+                        <strong>
+                          {modelInfo.model_type ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Training Rows</span>
+                        <strong>
+                          {typeof modelInfo.training_rows ===
+                          "number"
+                            ? modelInfo.training_rows.toLocaleString(
+                                "en-US"
+                              )
+                            : "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Feature Count</span>
+                        <strong>
+                          {modelInfo.feature_count ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>
+                          Numeric Feature Count
+                        </span>
+                        <strong>
+                          {modelInfo.numeric_feature_count ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>
+                          Categorical Feature Count
+                        </span>
+                        <strong>
+                          {modelInfo.categorical_feature_count ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>
+                          Excluded Sensitive Feature
+                        </span>
+                        <strong className="excluded">
+                          {modelInfo.excluded_sensitive_feature ??
+                            "—"}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Iterations</span>
+                        <strong>
+                          {typeof modelInfo.iterations ===
+                          "number"
+                            ? modelInfo.iterations.toLocaleString(
+                                "en-US"
+                              )
+                            : "—"}
+                        </strong>
+                      </div>
                     </div>
-                  ) : (
-                    <select
-                      value={selectedCustomer}
-                      onChange={(event) => {
-                        abortPendingExplanation();
 
-                        setSelectedCustomer(
-                          event.target.value
-                        );
-
-                        setPrediction(null);
-                        setExplanation(null);
-                        setExplanationError("");
-                      }}
-                    >
-                      {customers.map(
-                        (customerId) => (
-                          <option
-                            key={customerId}
-                            value={customerId}
-                          >
-                            Customer #{customerId}
-                          </option>
-                        )
-                      )}
-                    </select>
-                  )}
-                </div>
-
-                {loadingProfile && (
-                  <div className="loading-text">
-                    Loading customer profile...
-                  </div>
-                )}
-
-                {profileError && (
-                  <div className="error-banner">
-                    {profileError}
-                  </div>
-                )}
-
-                {customerProfile && !loadingProfile && (
-                  <div className="profile-card">
-                    <p className="eyebrow">
-                      CUSTOMER PROFILE
+                    <p className="section-subheading">
+                      Development Validation
                     </p>
 
                     <div className="profile-grid">
                       <div className="profile-item">
-                        <span>Annual Income</span>
+                        <span>ROC-AUC</span>
                         <strong>
-                          {formatCurrency(
-                            customerProfile.income_total
+                          {formatMetric(
+                            modelInfo
+                              .development_validation
+                              ?.roc_auc
                           )}
                         </strong>
                       </div>
 
                       <div className="profile-item">
-                        <span>Credit Amount</span>
+                        <span>PR-AUC</span>
                         <strong>
-                          {formatCurrency(
-                            customerProfile.credit_amount
+                          {formatMetric(
+                            modelInfo
+                              .development_validation
+                              ?.pr_auc
                           )}
                         </strong>
                       </div>
 
                       <div className="profile-item">
-                        <span>Annuity</span>
+                        <span>F1</span>
                         <strong>
-                          {formatCurrency(
-                            customerProfile.annuity_amount
+                          {formatMetric(
+                            modelInfo
+                              .development_validation
+                              ?.f1_at_0_50
                           )}
                         </strong>
                       </div>
 
                       <div className="profile-item">
-                        <span>Goods Price</span>
+                        <span>Recall</span>
                         <strong>
-                          {formatCurrency(
-                            customerProfile.goods_price
-                          )}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>Age</span>
-                        <strong>
-                          {formatYears(
-                            customerProfile.age_years
-                          )}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>
-                          Employment Duration
-                        </span>
-                        <strong>
-                          {formatYears(
-                            customerProfile.employment_years
-                          )}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>Education</span>
-                        <strong>
-                          {customerProfile.education_type ??
-                            "—"}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>Income Type</span>
-                        <strong>
-                          {customerProfile.income_type ??
-                            "—"}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>Family Status</span>
-                        <strong>
-                          {customerProfile.family_status ??
-                            "—"}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>Bureau History</span>
-                        <strong>
-                          {formatHistory(
-                            customerProfile.has_bureau_history
-                          )}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>
-                          Previous Applications
-                        </span>
-                        <strong>
-                          {formatHistory(
-                            customerProfile.has_previous_application_history
-                          )}
-                        </strong>
-                      </div>
-
-                      <div className="profile-item">
-                        <span>
-                          Installment History
-                        </span>
-                        <strong>
-                          {formatHistory(
-                            customerProfile.has_installment_history
+                          {formatMetric(
+                            modelInfo
+                              .development_validation
+                              ?.recall_at_0_50
                           )}
                         </strong>
                       </div>
                     </div>
+
+                    <p className="section-subheading">
+                      OOF / Stability Validation
+                    </p>
+
+                    <div className="profile-grid">
+                      <div className="profile-item">
+                        <span>ROC-AUC</span>
+                        <strong>
+                          {formatMetric(
+                            oof.roc_auc
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>PR-AUC</span>
+                        <strong>
+                          {formatMetric(
+                            oof.pr_auc
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>F1</span>
+                        <strong>
+                          {formatMetric(
+                            oof.f1_at_0_50
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="profile-item">
+                        <span>Recall</span>
+                        <strong>
+                          {formatMetric(
+                            oof.recall_at_0_50
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="notice">
+                      {modelInfo.probability_note ??
+                        "Model output is an uncalibrated risk score and should not be interpreted as a probability of default."}
+                      {" "}The predictive feature
+                      set excludes{" "}
+                      {modelInfo.excluded_sensitive_feature ??
+                        "the sensitive feature"}{" "}
+                      (gender-free predictive
+                      inputs). The model uses a
+                      class-balanced training
+                      strategy and its output is a
+                      risk_score, not a decision.
+                    </div>
+                  </>
+                )}
+            </div>
+          </section>
+        )}
+
+        {activeView === "fairness" && (
+          <section className="content-grid content-grid-single">
+            <div className="panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">
+                    POST-HOC AUDIT
+                  </p>
+
+                  <h3>Fairness Audit</h3>
+                </div>
+              </div>
+
+              <p className="panel-description">
+                CODE_GENDER is excluded from
+                predictive inputs and is used
+                only for post-hoc auditing.
+              </p>
+
+              {loadingFairness && (
+                <div className="loading-text">
+                  Loading fairness report...
+                </div>
+              )}
+
+              {fairnessError &&
+                !loadingFairness && (
+                  <div className="error-banner">
+                    {fairnessError}
                   </div>
                 )}
 
-                <button
-                  className="predict-button"
-                  onClick={runPrediction}
-                  disabled={
-                    predicting ||
-                    loadingCustomers ||
-                    !selectedCustomer
-                  }
-                >
-                  {predicting
-                    ? "Analyzing customer..."
-                    : "Generate Risk Score"}
-                </button>
+              {fairnessSummary &&
+                !loadingFairness && (
+                  <>
+                    <div className="fairness-groups">
+                      {fairnessSummary.groups.map(
+                        (group) => (
+                          <div
+                            className="fairness-group-card"
+                            key={group.group}
+                          >
+                            <div className="fairness-group-header">
+                              <span className="fairness-group-name">
+                                Group{" "}
+                                {group.group}
+                              </span>
 
-                {prediction && (
-                  <div className="prediction-result">
-                    <p className="eyebrow">
-                      MODEL RESULT
-                    </p>
+                              <span className="fairness-group-count">
+                                {group.sample_count.toLocaleString(
+                                  "en-US"
+                                )}{" "}
+                                samples
+                              </span>
+                            </div>
 
-                    <div className="result-header">
-                      <div>
-                        <span>
-                          Customer
-                        </span>
+                            <div className="fairness-metric-row">
+                              <span>
+                                Actual Positive Rate
+                              </span>
+                              <strong>
+                                {formatPercent(
+                                  group.actual_positive_rate
+                                )}
+                              </strong>
+                            </div>
 
-                        <strong>
-                          #
-                          {
-                            prediction.SK_ID_CURR
-                          }
-                        </strong>
-                      </div>
+                            <div className="fairness-metric-row">
+                              <span>
+                                Selection Rate
+                              </span>
+                              <strong>
+                                {formatPercent(
+                                  group.selection_rate
+                                )}
+                              </strong>
+                            </div>
+
+                            <div className="fairness-metric-row">
+                              <span>Precision</span>
+                              <strong>
+                                {formatPercent(
+                                  group.precision
+                                )}
+                              </strong>
+                            </div>
+
+                            <div className="fairness-metric-row">
+                              <span>Recall</span>
+                              <strong>
+                                {formatPercent(
+                                  group.recall
+                                )}
+                              </strong>
+                            </div>
+
+                            <div className="fairness-metric-row">
+                              <span>
+                                False Positive Rate
+                              </span>
+                              <strong>
+                                {formatPercent(
+                                  group.false_positive_rate
+                                )}
+                              </strong>
+                            </div>
+
+                            <div className="fairness-metric-row">
+                              <span>
+                                False Negative Rate
+                              </span>
+                              <strong>
+                                {formatPercent(
+                                  group.false_negative_rate
+                                )}
+                              </strong>
+                            </div>
+
+                            <div className="fairness-metric-row">
+                              <span>ROC-AUC</span>
+                              <strong>
+                                {formatMetric(
+                                  group.roc_auc
+                                )}
+                              </strong>
+                            </div>
+                          </div>
+                        )
+                      )}
                     </div>
 
-                    <div className="score-gauge">
-                      <div className="gauge-label-row">
-                        <span>
-                          Model Risk Score
-                        </span>
-
-                        <strong className="gauge-value">
-                          {prediction.risk_score.toFixed(
-                            3
-                          )}
-                        </strong>
-                      </div>
-
-                      <div className="score-track">
-                        <div
-                          className="score-fill"
-                          style={{
-                            width: `${Math.min(
-                              Math.max(
-                                prediction.risk_score *
-                                  100,
-                                0
-                              ),
-                              100
-                            )}%`,
-                          }}
-                        />
-                      </div>
-
-                      <div className="gauge-scale">
-                        <span>0.00</span>
-                        <span>1.00</span>
-                      </div>
-
-                      <span
-                        className={`score-band score-band-${
-                          riskBand(
-                            prediction.risk_score
-                          ).key
-                        }`}
-                      >
-                        {
-                          riskBand(
-                            prediction.risk_score
-                          ).label
-                        }
-                      </span>
-                    </div>
-
-                    <p className="result-note">
-                      This is an uncalibrated model
-                      score, not a probability of
-                      default. The band above is a
-                      descriptive visualization grouping
-                      only — it is not a model
-                      validation threshold or a credit
-                      approval/rejection decision.
-                    </p>
-
-                    <p className="result-note">
-                      {
-                        prediction.interpretation
-                      }
-                    </p>
-                  </div>
-                )}
-
-                {loadingExplanation && (
-                  <div className="loading-text">
-                    Loading explanation...
-                  </div>
-                )}
-
-                {explanationError &&
-                  !loadingExplanation && (
-                    <div className="error-banner">
-                      {explanationError}
-                    </div>
-                  )}
-
-                {explanation &&
-                  !loadingExplanation && (
-                    <div className="explanation-card">
+                    <div className="fairness-gap-card">
                       <p className="eyebrow">
-                        MODEL EXPLANATION
+                        MAJOR-GROUP GAPS
                       </p>
 
                       <h4>
-                        Top Factors Influencing
-                        This Score
+                        Diagnostic group
+                        differences
                       </h4>
 
-                      <div className="factor-list">
-                        {explanation.top_features.map(
-                          (item) => (
-                            <div
-                              className="factor-row"
-                              key={item.feature}
-                            >
-                              <div className="factor-info">
-                                <span className="factor-name">
-                                  {formatFeatureLabel(
-                                    item.feature
-                                  )}
-                                </span>
+                      <div className="profile-grid">
+                        <div className="profile-item">
+                          <span>Recall Gap</span>
+                          <strong>
+                            {formatPercent(
+                              fairnessSummary.gaps
+                                .recall
+                            )}
+                          </strong>
+                        </div>
 
-                                <span className="factor-value">
-                                  value:{" "}
-                                  {formatFeatureValue(
-                                    item.value
-                                  )}
-                                </span>
-                              </div>
+                        <div className="profile-item">
+                          <span>
+                            False Positive Rate Gap
+                          </span>
+                          <strong>
+                            {formatPercent(
+                              fairnessSummary.gaps
+                                .false_positive_rate
+                            )}
+                          </strong>
+                        </div>
 
-                              <div
-                                className={`factor-direction factor-direction-${item.direction}`}
-                              >
-                                <span className="factor-arrow">
-                                  {directionSymbol(
-                                    item.direction
-                                  )}
-                                </span>
+                        <div className="profile-item">
+                          <span>
+                            False Negative Rate Gap
+                          </span>
+                          <strong>
+                            {formatPercent(
+                              fairnessSummary.gaps
+                                .false_negative_rate
+                            )}
+                          </strong>
+                        </div>
 
-                                <span>
-                                  {directionLabel(
-                                    item.direction
-                                  )}
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        )}
+                        <div className="profile-item">
+                          <span>ROC-AUC Gap</span>
+                          <strong>
+                            {formatMetric(
+                              fairnessSummary.gaps
+                                .roc_auc
+                            )}
+                          </strong>
+                        </div>
                       </div>
-
-                      <p className="result-note">
-                        {explanation.disclaimer}
-                      </p>
                     </div>
-                  )}
-              </div>
-            )}
-          </div>
 
-          <div className="panel model-panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">
-                  MODEL
-                </p>
+                    {fairnessSummary
+                      .excluded_groups &&
+                      fairnessSummary
+                        .excluded_groups.length >
+                        0 && (
+                        <p className="result-note">
+                          {fairnessSummary.excluded_groups
+                            .map(
+                              (group) =>
+                                `Group ${group.group} (n=${group.sample_count})`
+                            )
+                            .join(", ")}{" "}
+                          excluded from the
+                          headline comparison
+                          above due to small
+                          sample size.
+                        </p>
+                      )}
 
-                <h3>Research Model</h3>
-              </div>
+                    <p className="result-note">
+                      {fairnessSummary.note}
+                    </p>
+                  </>
+                )}
             </div>
-
-            <div className="model-row">
-              <span>Algorithm</span>
-
-              <strong>
-                {modelInfo?.model_type ??
-                  "Loading..."}
-              </strong>
-            </div>
-
-            <div className="model-row">
-              <span>Trees</span>
-
-              <strong>
-                {modelInfo?.iterations
-                  ? modelInfo.iterations.toLocaleString(
-                      "en-US"
-                    )
-                  : "—"}
-              </strong>
-            </div>
-
-            <div className="model-row">
-              <span>ROC-AUC</span>
-
-              <strong>
-                {typeof oof.roc_auc ===
-                "number"
-                  ? oof.roc_auc.toFixed(4)
-                  : "—"}
-              </strong>
-            </div>
-
-            <div className="model-row">
-              <span>PR-AUC</span>
-
-              <strong>
-                {typeof oof.pr_auc ===
-                "number"
-                  ? oof.pr_auc.toFixed(4)
-                  : "—"}
-              </strong>
-            </div>
-
-            <div className="model-row">
-              <span>
-                Sensitive Feature
-              </span>
-
-              <strong className="excluded">
-                {modelInfo
-                  ?.excluded_sensitive_feature
-                  ? `${modelInfo.excluded_sensitive_feature} excluded`
-                  : "—"}
-              </strong>
-            </div>
-
-            <div className="notice">
-              {modelInfo?.probability_note ??
-                "Model output is an uncalibrated risk score and should not be interpreted as a probability of default."}
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
       </main>
     </div>
   );
