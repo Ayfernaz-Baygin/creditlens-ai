@@ -1,104 +1,89 @@
 # CreditLens AI
 
-CreditLens AI is an explainable credit risk modeling and decision-support research project built on the Home Credit Default Risk dataset.
+Machine-learning based credit risk decision-support system built on the Home Credit Default Risk dataset.
 
-The project implements an end-to-end machine learning workflow covering data understanding, relational feature engineering, baseline modeling, gradient boosting, explainability, fairness auditing, cross-validation, model artifact generation, reusable inference, automated testing, and FastAPI-based model serving.
+> **CreditLens AI is not an automatic credit approval/rejection system.** It is a decision-support and research prototype: a FastAPI inference service and React dashboard around an explainable CatBoost risk model, with post-hoc fairness diagnostics. All final lending decisions remain a human and organizational responsibility.
 
-The current primary research model is a gender-free CatBoost classifier that excludes `CODE_GENDER` from the predictive feature set.
-
-> CreditLens AI is designed as a research and decision-support system. It is not intended to autonomously approve or reject credit applications.
-
----
-
-## Project Objectives
-
-- Build a reproducible credit default risk modeling pipeline
-- Analyze relational financial datasets
-- Engineer customer-level features from credit history tables
-- Compare linear and gradient-boosting models
-- Evaluate imbalanced classification performance using appropriate metrics
-- Perform threshold and cost-sensitive analysis
-- Explain model behavior using feature importance and SHAP values
-- Audit model performance across demographic groups
-- Reduce training-serving skew through shared feature-engineering code
-- Export a reusable trained model and inference pipeline
-- Serve model predictions through a FastAPI API
-- Support future interactive dashboard integration
+[![CreditLens CI](https://github.com/Ayfernaz-Baygin/creditlens-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/Ayfernaz-Baygin/creditlens-ai/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.13-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688)
+![React](https://img.shields.io/badge/React-19-61DAFB)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
 
 ---
 
-## Dataset
+## Overview
 
-The project uses the **Home Credit Default Risk** dataset.
+CreditLens AI:
 
-The dataset contains multiple relational tables, including:
+- Models credit default risk on the Home Credit Default Risk dataset using relational, customer-level features.
+- Serves predictions through a FastAPI inference layer backed by a trained CatBoost classifier.
+- Ships a React/Vite dashboard for exploring demo customers, risk scores, and explanations.
+- Produces local SHAP explanations for individual predictions.
+- Reports post-hoc fairness diagnostics across demographic groups.
+- Runs in a Docker + Nginx production-like local stack.
+- Is validated on every push/PR by a GitHub Actions CI pipeline.
 
-- `application_train.csv`
-- `application_test.csv`
-- `bureau.csv`
-- `bureau_balance.csv`
-- `previous_application.csv`
-- `installments_payments.csv`
-- `credit_card_balance.csv`
-- `POS_CASH_balance.csv`
+What it deliberately does **not** do:
 
-Raw datasets are intentionally excluded from the repository.
-
-The main training dataset contains:
-
-- **307,511 labeled customers**
-- Approximately **8.07% positive/default class**
-- Strong class imbalance of approximately **11.4:1**
+- It does not make an automatic credit approval/rejection decision.
+- Its output (`risk_score`) is **not** a calibrated probability of default.
+- Its fairness diagnostics do not amount to a legal or normative "fair" / "unfair" judgment.
 
 ---
 
-## Relational Feature Engineering
+## Architecture
 
-Customer-level features were generated from multiple relational data sources.
+```text
+Browser
+   │
+   ▼
+Nginx (:8080)
+   ├── React / Vite static frontend
+   └── /api/*  ───────────────►  FastAPI (:8000)
+                                       │
+                                       ▼
+                             Feature Engineering
+                                       │
+                                       ▼
+                                  CatBoost
+                                       │
+                                       ▼
+                        Risk Score + SHAP Explanation
+```
 
-### Bureau History
+In local development, the React dev server (`:5173`) talks directly to FastAPI (`:8000`) over CORS — there is no Nginx in that loop. The Docker stack described above is what turns that into a single-origin (`:8080`) deployment where the browser only ever calls same-origin `/api/...` paths.
 
-Examples include:
+---
 
-- bureau loan count
-- average and maximum debt
-- total and maximum credit amounts
-- credit activity status
-- credit history timing information
+## Features
 
-### Previous Applications
-
-Examples include:
-
-- previous application count
-- approval and refusal rates
-- previous annuity statistics
-- credit-to-application ratios
-- payment term statistics
-
-### Installment Payments
-
-Examples include:
-
-- late payment rates
-- days past due statistics
-- underpayment rates
-- payment shortfalls
-- payment-to-installment ratios
-
-The final predictive matrix contains:
-
-- **194 model features**
-- **179 numeric features**
-- **15 categorical features**
-
-`CODE_GENDER`, `TARGET`, and `SK_ID_CURR` are excluded from the final predictive feature set.
+- Customer-level risk scoring from a shared, production-identical feature-engineering pipeline (no train/serve skew).
+- 194 predictive features (179 numeric, 15 categorical) built from application data plus aggregated bureau, previous-application, and installment-payment history.
+- CatBoost gender-free final model — `CODE_GENDER` is **not** a predictive input; it is used only for post-hoc fairness auditing.
+- Local SHAP explanations for individual predictions, with feature-level direction (`increases_score` / `decreases_score`).
+- Customer profile view (income, credit terms, demographics, credit-history flags).
+- Model Information dashboard sourced from the live `/model-info` endpoint.
+- Post-hoc fairness diagnostics across major demographic groups, sourced from the live `/fairness-summary` endpoint.
+- Dockerized production-like stack (Nginx + FastAPI + React) with the dataset mounted read-only, never baked into the image.
+- GitHub Actions CI validating backend tests, frontend build, and Docker build on every push/PR.
 
 ---
 
 ## Model Development
 
-Three major model configurations were evaluated using the same development-validation framework.
+The model was developed through six notebooks, in order:
+
+| Notebook | Purpose |
+|---|---|
+| `01_data_understanding.ipynb` | Dataset structure, class balance, missing values |
+| `02_baseline_model.ipynb` | Baseline logistic regression |
+| `03_relational_feature_engineering.ipynb` | Customer-level features from bureau/previous-application/installment tables |
+| `04_boosting_model.ipynb` | LightGBM vs. CatBoost comparison |
+| `05_final_validation.ipynb` | Cross-validation, gender ablation, fairness analysis |
+| `06_final_model.ipynb` | Final full-data model training and artifact export |
+
+### Model Comparison (full feature set)
 
 | Model | ROC-AUC | PR-AUC | F1 @ 0.50 |
 |---|---:|---:|---:|
@@ -106,407 +91,186 @@ Three major model configurations were evaluated using the same development-valid
 | LightGBM | 0.7815 | 0.2779 | 0.2970 |
 | CatBoost | **0.7842** | **0.2828** | **0.3040** |
 
-CatBoost achieved the strongest development-validation performance.
+### Gender-Free Ablation
 
----
-
-## Fairness-Oriented Ablation
-
-`CODE_GENDER` was found to have meaningful model influence during explainability analysis.
-
-A second CatBoost model was therefore trained without `CODE_GENDER`.
+`CODE_GENDER` showed meaningful influence during explainability analysis, so a second CatBoost model was trained without it:
 
 | Model | ROC-AUC | PR-AUC | F1 |
 |---|---:|---:|---:|
-| Full CatBoost | 0.7842 | 0.2828 | 0.3040 |
-| Gender-Free CatBoost | 0.7821 | 0.2797 | 0.3013 |
+| CatBoost (full, incl. `CODE_GENDER`) | 0.7842 | 0.2828 | 0.3040 |
+| CatBoost (gender-free) | 0.7821 | 0.2797 | 0.3013 |
 
-The predictive performance loss was limited, so the gender-free model was retained as the primary research candidate.
-
-`CODE_GENDER` is retained only for post-hoc fairness auditing and is not used as a predictive input.
+The predictive-performance loss from removing `CODE_GENDER` was small, so the gender-free model was kept as the primary research candidate. `CODE_GENDER` is retained in the dataset only for the post-hoc fairness audit below.
 
 ---
 
-## Cross-Validation
+## Final Model
 
-The primary gender-free CatBoost model was evaluated using 3-fold stratified cross-validation.
+Model artifact:
 
-### Mean CV Performance
+```text
+models/creditlens_catboost_gender_free.cbm
+models/creditlens_feature_schema.json
+models/creditlens_model_metadata.json
+```
+
+Configuration (from `creditlens_model_metadata.json`):
+
+| | |
+|---|---|
+| Model | CatBoostClassifier |
+| Training rows | 307,511 |
+| Features | 194 total — 179 numeric, 15 categorical |
+| Excluded from predictive inputs | `CODE_GENDER`, `TARGET`, `SK_ID_CURR` |
+| Iterations | 1,470 |
+| Learning rate | 0.03 |
+| Depth | 7 |
+| L2 leaf regularization | 5 |
+| Class weighting | Balanced |
+| Random seed | 42 |
+
+The feature schema (`creditlens_feature_schema.json`) stores the exact ordered feature contract, categorical/numeric splits, excluded columns, and missing-value handling used by both training and inference — this is the mechanism that keeps `src/feature_engineering.py` train/serve-consistent.
+
+---
+
+## Model Performance
+
+### Development Validation vs. Out-of-Fold (final gender-free model)
+
+| Metric | Development Validation | Out-of-Fold (3-fold CV) |
+|---|---:|---:|
+| ROC-AUC | 0.7821 | 0.7779 |
+| PR-AUC | 0.2797 | 0.2684 |
+| F1 @ 0.50 | 0.3013 | 0.3003 |
+| Recall @ 0.50 | — | 0.6395 |
+
+### 3-Fold Cross-Validation (mean ± std)
 
 - ROC-AUC: **0.7779 ± 0.0012**
 - PR-AUC: **0.2685 ± 0.0050**
 - F1 @ 0.50: **0.3003 ± 0.0010**
 - Recall @ 0.50: **0.6395 ± 0.0071**
 
-### Out-of-Fold Performance
-
-- ROC-AUC: **0.7779**
-- PR-AUC: **0.2684**
-- F1: **0.3003**
-- Recall: **0.6395**
-
-The small variation between folds indicates relatively stable model performance across different stratified partitions.
-
-The out-of-fold evaluation is used as a stability estimate rather than as a completely independent untouched test set because model architecture and training configuration were selected during development.
+The small spread across folds indicates relatively stable performance. Out-of-fold results are used as a stability estimate rather than a fully independent test, since the model architecture and training configuration were selected during development.
 
 ---
 
-## Threshold Analysis
+## Risk Score Interpretation
 
-The model output is treated as a **risk score** rather than a calibrated probability of default.
+**The model output is a risk score produced by a class-balanced model. It must NOT be interpreted as a calibrated probability of default.**
 
-Different operating thresholds produce different precision-recall trade-offs.
+The dashboard's descriptive UI bands — *Lower*, *Moderate*, *Higher* — are visualization groupings only. They are:
 
-Development experiments showed that:
+- **not** a lending threshold,
+- **not** an approval/rejection threshold,
+- **not** a regulatory decision rule.
 
-- lower thresholds increase recall
-- higher thresholds increase precision
-- the threshold that maximizes F1 is not necessarily appropriate for credit-risk screening
-- the preferred threshold depends on the relative cost of false positives and false negatives
-
-No universal or demographic-group-specific lending threshold is hard-coded into the project.
+A statement such as *"34% probability of default"* is an incorrect reading of `risk_score`. Turning this score into a probability would require a separate, explicit probability-calibration step that this project does not currently perform (see [Limitations](#limitations)).
 
 ---
 
 ## Explainability
 
-The project includes both CatBoost feature importance and SHAP-based analysis.
+`GET /demo/explain/{customer_id}` returns a local SHAP-based explanation for one customer's risk score, computed with CatBoost's native SHAP implementation.
 
-Important predictors include:
+Each top feature contribution includes:
 
-- `EXT_SOURCE_1`
-- `EXT_SOURCE_2`
-- `EXT_SOURCE_3`
-- `AMT_CREDIT`
-- `AMT_GOODS_PRICE`
-- `DAYS_EMPLOYED`
-- previous application features
-- bureau debt features
-- installment late-payment features
+- the feature's raw value for that customer,
+- its SHAP contribution in the model's raw margin space,
+- a direction label: `increases_score` or `decreases_score`.
 
-Relational financial-history features account for a substantial portion of total model importance.
+Representative predictive features include `EXT_SOURCE_1`, `EXT_SOURCE_2`, `EXT_SOURCE_3`, `AMT_GOODS_PRICE`, and `BUREAU_DAYS_CREDIT_MAX`, among the full 194-feature set.
 
-SHAP analysis is used to evaluate both feature importance and the direction of model effects.
-
-These explanations describe model behavior and should not be interpreted as causal relationships.
+**SHAP contributions describe model behavior, not causality.** A feature that increases the score is not necessarily a "cause" of higher risk in any real-world sense — it reflects the pattern the model learned from historical data.
 
 ---
 
-## Fairness Audit
+## Fairness Diagnostics
 
-The gender-free model was audited post-hoc using `CODE_GENDER`.
+`CODE_GENDER` is **not** a predictive input to the model. It is used exclusively for the post-hoc audit below, sourced from `GET /fairness-summary` (backed by `reports/catboost_gender_fairness_*.csv`).
 
-The two sufficiently represented groups showed similar ranking performance:
+| Group | Samples | ROC-AUC | Recall | FPR |
+|---|---:|---:|---:|---:|
+| F | 40,561 | 0.7768 | 0.6199 | 0.2103 |
+| M | 20,940 | 0.7814 | 0.6886 | 0.2805 |
 
-- ROC-AUC gap: approximately **0.0047**
+**Major-group gaps:**
 
-However, threshold-dependent differences were observed:
+| Metric | Gap |
+|---|---:|
+| ROC-AUC | 0.0047 |
+| Recall | 0.0687 |
+| False Positive Rate | 0.0701 |
 
-- Recall gap: approximately **6.9 percentage points**
-- False-positive-rate gap: approximately **7.0 percentage points**
-- False-negative-rate gap: approximately **6.9 percentage points**
+A third group (`XNA`, n=2) exists in the raw audit output but is excluded from the headline gap comparison above because its sample size is too small to be meaningful.
 
-A very small `XNA` group was preserved in raw audit outputs but excluded from headline fairness-gap calculations because of insufficient sample size.
-
-These results are treated as diagnostic measurements rather than proof that the model is fair or unfair.
-
----
-
-## Final Model Artifact
-
-The final research model is stored as:
-
-```text
-models/creditlens_catboost_gender_free.cbm
-```
-
-The final model was trained on all **307,511 labeled training rows**.
-
-Model configuration:
-
-- CatBoostClassifier
-- 1,470 trees
-- learning rate: 0.03
-- depth: 7
-- L2 leaf regularization: 5
-- balanced class weighting
-- random seed: 42
-- gender-free predictive feature set
-
-Additional model artifacts:
-
-```text
-models/creditlens_feature_schema.json
-models/creditlens_model_metadata.json
-```
-
-The schema stores the exact ordered model feature contract, categorical and numeric features, excluded fields, missing-value handling, and engineered feature settings.
-
-The metadata file stores training configuration, model information, validation metrics, and inference metadata.
+**These are post-hoc diagnostic group differences and do not establish whether the system is fair or unfair.** Ranking performance (ROC-AUC) is close between groups; recall and false-positive-rate gaps at the default 0.50 operating point are more pronounced and would warrant further threshold-level analysis before any real-world use.
 
 ---
 
-## Shared Feature Engineering
+## API
 
-Production inference uses the same shared feature-engineering implementation as the validated model workflow.
+FastAPI base URL (local development): `http://127.0.0.1:8000`
+Interactive Swagger docs: `http://127.0.0.1:8000/docs`
 
-The main feature-engineering module is:
-
-```text
-src/feature_engineering.py
-```
-
-It is responsible for:
-
-- merging application and customer-level relational features
-- checking customer identifiers
-- detecting duplicate relational rows
-- creating history-presence flags
-- handling the `DAYS_EMPLOYED` sentinel value
-- enforcing the saved feature schema
-- preparing categorical missing values
-- preserving exact feature order
-
-This reduces training-serving skew between experimentation and inference.
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | API name, version, and status |
+| `GET` | `/health` | Checks that the model, schema, and metadata artifacts are available |
+| `GET` | `/model-info` | Model configuration and validation/stability metrics |
+| `GET` | `/fairness-summary` | Post-hoc fairness diagnostics by demographic group |
+| `GET` | `/demo/customers` | Lists demo customer IDs available in the local dataset |
+| `GET` | `/demo/customers/{customer_id}` | Readable profile summary for one demo customer |
+| `POST` | `/demo/predict/{customer_id}` | Generates a risk score for a demo customer |
+| `GET` | `/demo/explain/{customer_id}` | Local SHAP explanation for a demo customer's risk score |
+| `POST` | `/predict` | Generates a risk score from caller-supplied feature payloads |
 
 ---
 
-## Command-Line Inference
+## Dashboard
 
-The project includes a reusable command-line inference pipeline:
+The React dashboard has four pages:
 
-```text
-src/inference.py
-```
+- **Dashboard** — model summary cards, a *Last Analysis* card (reflects the most recent Risk Analysis run in the current session), a *Model Snapshot*, a *Fairness Diagnostics* summary, and *Quick Actions* shortcuts to the other pages.
+- **Risk Analysis** — demo customer selection, customer profile, the live Model Risk Score with its descriptive band, and the SHAP explanation for that prediction.
+- **Model Information** — model configuration and validation/stability metrics, from `/model-info`.
+- **Fairness** — the full fairness diagnostics table and major-group gaps, from `/fairness-summary`.
 
-Example:
-
-```bash
-python src/inference.py \
-  --application data/raw/application_test.csv \
-  --bureau data/interim/bureau_customer_features.csv \
-  --previous data/interim/previous_application_customer_features.csv \
-  --installments data/interim/installments_customer_features.csv \
-  --output reports/predictions.csv
-```
-
-The inference pipeline expects:
-
-- application-level customer data
-- already aggregated customer-level bureau features
-- already aggregated previous-application features
-- already aggregated installment-payment features
-
-The current production inference layer does not aggregate the original multi-million-row relational raw tables during each prediction request.
+*(No UI screenshots are included in this README.)*
 
 ---
 
-## FastAPI Inference API
+## Dataset
 
-CreditLens AI includes a FastAPI-based model-serving layer.
+CreditLens AI uses the **Home Credit Default Risk** dataset (originally distributed via the Kaggle competition of the same name).
 
-The API entry point is:
+The raw and interim dataset files are **not** stored in this Git repository. This is intentional:
 
-```text
-src/api.py
-```
+- the raw tables are multiple gigabytes in total, which does not belong in a Git history;
+- the dataset carries its own licensing/distribution terms via Kaggle, so it is not redistributed here.
 
-Start the API locally with:
-
-```bash
-uvicorn src.api:app --reload
-```
-
-The API will run at:
+To run the demo endpoints locally, the following files must exist on disk (paths relative to the repository root):
 
 ```text
-http://127.0.0.1:8000
+data/raw/application_test.csv
+data/interim/bureau_customer_features.csv
+data/interim/previous_application_customer_features.csv
+data/interim/installments_customer_features.csv
 ```
 
-Interactive Swagger documentation is available at:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### Available Endpoints
-
-#### `GET /`
-
-Returns basic API status and version information.
-
-#### `GET /health`
-
-Checks whether the required model, schema, and metadata artifacts are available.
-
-#### `GET /model-info`
-
-Returns information about the deployed research model, including:
-
-- model type
-- training row count
-- feature count
-- categorical and numeric feature counts
-- excluded sensitive feature
-- training iterations
-- development-validation metrics
-- out-of-fold metrics
-- risk-score interpretation information
-
-#### `POST /predict`
-
-Generates a customer-level credit risk score from:
-
-- application-level features
-- aggregated bureau features
-- aggregated previous-application features
-- aggregated installment-payment features
-
-Example response:
-
-```json
-{
-  "SK_ID_CURR": 100001,
-  "risk_score": 0.346927880706,
-  "interpretation": "Risk score from the class-balanced CatBoost model. This value is not a calibrated probability of default."
-}
-```
-
-The API validates that relational feature records belong to the same customer.
-
-The trained CatBoost model and feature schema are cached in memory and reused across requests instead of being reloaded from disk for every prediction.
-
-The returned `risk_score` must not be interpreted as a calibrated default probability.
+There is no automated download step for these files, and no Kaggle credentials are required by any script in this repository — obtaining and placing the dataset is a manual prerequisite.
 
 ---
 
-## API Regression Check
+## Local Development
 
-A smoke-test script is included:
-
-```text
-src/api_smoke_test.py
-```
-
-It selects a customer present in all required feature sources, sends the customer data to the live FastAPI `/predict` endpoint, and compares the returned risk score against the previously validated inference output.
-
-Validated result:
-
-```text
-Customer: 100001
-
-Expected score: 0.346927880706
-API score:      0.346927880706
-Difference:     0.000000000000
-Scores match:   True
-
-API regression check PASSED.
-```
-
-This verifies that the API-serving layer preserves the validated model output.
-
----
-
-## Automated Tests
-
-The project currently contains **20 automated tests**.
-
-The test suite covers:
-
-- feature merging
-- customer-history flags
-- `DAYS_EMPLOYED` sentinel handling
-- model feature-schema enforcement
-- categorical missing-value handling
-- missing-feature validation
-- unexpected-feature validation
-- duplicate customer-row detection
-- customer-ID validation
-- saved model loading
-- model artifact availability
-- inference output contracts
-- NaN prediction protection
-- FastAPI root endpoint
-- FastAPI health endpoint
-- model-information endpoint
-- prediction endpoint behavior
-- mismatched customer-ID rejection
-
-Run all tests with:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Current validated result:
-
-```text
-Ran 20 tests
-
-OK
-```
-
----
-
-## Project Structure
-
-```text
-creditlens-ai/
-│
-├── data/
-│   ├── raw/
-│   ├── interim/
-│   └── processed/
-│
-├── models/
-│   ├── creditlens_catboost_gender_free.cbm
-│   ├── creditlens_feature_schema.json
-│   └── creditlens_model_metadata.json
-│
-├── notebooks/
-│   ├── 01_data_understanding.ipynb
-│   ├── 02_baseline_model.ipynb
-│   ├── 03_relational_feature_engineering.ipynb
-│   ├── 04_boosting_model.ipynb
-│   ├── 05_final_validation.ipynb
-│   └── 06_final_model.ipynb
-│
-├── reports/
-│
-├── src/
-│   ├── api.py
-│   ├── api_smoke_test.py
-│   ├── feature_engineering.py
-│   └── inference.py
-│
-├── tests/
-│   ├── test_api.py
-│   ├── test_feature_engineering.py
-│   └── test_inference.py
-│
-├── .gitignore
-├── README.md
-└── requirements.txt
-```
-
----
-
-## Installation
-
-Clone the repository:
-
-```bash
-git clone https://github.com/Ayfernaz-Baygin/creditlens-ai.git
-cd creditlens-ai
-```
-
-Create a virtual environment:
+Create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
 ```
 
-Activate it on Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -518,83 +282,160 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
----
+Start the backend:
 
-## Technology Stack
+```bash
+uvicorn src.api:app --reload
+```
 
-The project currently uses:
+In a second terminal, start the frontend:
 
-- Python
-- pandas
-- NumPy
-- scikit-learn
-- LightGBM
-- CatBoost
-- SHAP
-- Jupyter
-- FastAPI
-- Pydantic
-- Uvicorn
-- HTTPX
-- unittest
-- Git
-- GitHub
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+| Service | URL |
+|---|---|
+| Frontend | `http://localhost:5173` |
+| FastAPI | `http://127.0.0.1:8000` |
+| Swagger | `http://127.0.0.1:8000/docs` |
 
 ---
 
-## Current Status
+## Docker
 
-The following major components are complete:
+Build and start the production-like local stack:
 
-- data understanding
-- baseline logistic regression
-- relational feature engineering
-- LightGBM modeling
-- CatBoost modeling
-- threshold analysis
-- cost-sensitive analysis
-- feature importance analysis
-- SHAP analysis
-- fairness-oriented gender ablation
-- post-hoc fairness audit
-- stratified cross-validation
-- out-of-fold evaluation
-- final gender-free model training
-- model artifact export
-- reusable feature-engineering pipeline
-- reusable command-line inference
-- automated test suite
-- FastAPI inference service
-- Swagger API documentation
-- API regression verification
+```bash
+docker compose build
+docker compose up -d
+```
+
+| Service | URL |
+|---|---|
+| Application (Nginx + React, proxying `/api`) | `http://localhost:8080` |
+| API through the Nginx proxy | `http://localhost:8080/api/health` |
+| FastAPI directly (debug/Swagger) | `http://localhost:8000/docs` |
+
+Architecture: an Nginx container serves the built React frontend and proxies `/api/*` to the FastAPI container. `data/raw` and `data/interim` are mounted **read-only** from the host into the backend container (`docker-compose.yml`) — the dataset is never copied into the image (see `.dockerignore`).
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+This does not remove the host `data/` directory — the mounts are bind mounts, not managed volumes.
+
+---
+
+## Testing
+
+Backend tests:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Current result: **30 tests, all passing.**
+
+Frontend production build:
+
+```bash
+npm --prefix frontend run build
+```
+
+Docker validation:
+
+```bash
+docker compose config
+docker compose build
+```
+
+---
+
+## Continuous Integration
+
+Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — **CreditLens CI**
+
+Triggers: `push` and `pull_request` on `main`.
+
+Three independent jobs run in parallel:
+
+| Job | Validates |
+|---|---|
+| `backend-tests` | Installs `requirements-backend.txt` + `httpx`, runs the full `unittest` suite |
+| `frontend-build` | `npm ci` + `npm run build` for the Vite frontend |
+| `docker-build` | `docker compose config` + `docker compose build` for both images |
+
+The CI pipeline does **not** download the raw/interim dataset and does **not** run `docker compose up` — `data/raw` and `data/interim` are absent in CI by design, and image build/config resolution does not require them (only `docker compose up` would).
+
+---
+
+## Project Structure
+
+```text
+creditlens-ai/
+├── src/                       # FastAPI app, inference, feature engineering
+├── tests/                     # Backend automated test suite
+├── notebooks/                 # Model development notebooks (01-06)
+├── models/                    # Trained model artifact, schema, metadata
+├── reports/                   # Validation, SHAP, and fairness CSV reports
+├── frontend/                  # React + Vite dashboard, Dockerfile, nginx.conf
+├── data/                      # raw/ and interim/ are git-ignored (see Dataset)
+├── .github/workflows/ci.yml
+├── Dockerfile.backend
+├── docker-compose.yml
+├── requirements.txt
+├── requirements-backend.txt
+└── README.md
+```
+
+---
+
+## Design Principles
+
+- Gender-free predictive model, with sensitive-attribute use limited to post-hoc auditing.
+- Explainability as a first-class output (SHAP), not an afterthought.
+- Reproducibility: a fixed feature schema and shared feature-engineering code between training and serving.
+- Clean separation between the model, the API, and the UI.
+- Decision support over autonomous decision-making.
+- No calibrated-probability claim without an explicit calibration step.
+- Fairness treated as ongoing post-hoc monitoring, not a one-time pass/fail check.
+
+---
+
+## Limitations
+
+- Built on a Kaggle research dataset, not real-time production banking data.
+- Class-balanced training affects how the raw score should be read; it is not directly comparable to an unbalanced model's output.
+- No probability calibration has been applied — `risk_score` is not a probability.
+- No external, prospective (out-of-time or out-of-population) validation has been performed.
+- Fairness analysis is limited to the demographic groups and sample sizes available in this dataset (the `XNA` group, n=2, is too small to analyze).
+- SHAP explanations are descriptive of model behavior, not causal claims.
+- This is not a lending approval/rejection system and is not fit for that purpose as-is.
 
 ---
 
 ## Future Work
 
-Planned extensions include:
-
-- interactive frontend/dashboard
-- human-vs-model decision analysis
-- probability calibration
-- extended fairness analysis
-- Docker containerization
-- continuous integration with GitHub Actions
-- experiment tracking
-- model and data versioning
-- production monitoring
-- deployment to a hosted environment
+- Probability calibration of the risk score.
+- Decision-curve / cost-sensitive threshold analysis.
+- Model monitoring and drift detection.
+- Stronger integration testing against fixture datasets (independent of the real Home Credit files).
+- Deployment to a hosted cloud environment.
+- API authentication / rate limiting if the service is ever exposed publicly.
+- Automated model/version registry.
+- Accessibility improvements to the dashboard.
 
 ---
 
 ## Research and Responsible-Use Note
 
-CreditLens AI is an educational and research project.
+CreditLens AI is an educational and research project. Running it in Docker behind Nginx makes it easier to demo end-to-end — it does not change its research/decision-support nature.
 
-Credit decisions can have significant consequences for individuals and may be subject to legal, regulatory, ethical, and organizational requirements.
+Credit decisions can have significant consequences for individuals and may be subject to legal, regulatory, ethical, and organizational requirements. This project treats machine-learning output as decision-support information, not an autonomous lending decision.
 
-The project therefore treats machine-learning output as decision-support information rather than an autonomous lending decision.
-
-Sensitive attributes are not used by the primary predictive model, but their exclusion alone does not guarantee fairness because correlated proxy variables and threshold-dependent disparities may still exist.
-
-Model outputs should be evaluated together with calibration, fairness analysis, human oversight, domain expertise, and applicable regulatory requirements.
+`CODE_GENDER` is not used by the primary predictive model, but excluding it does not by itself guarantee fairness — correlated proxy variables and threshold-dependent disparities (as observed in the fairness diagnostics above) may still exist. Model outputs should be evaluated together with calibration, fairness analysis, human oversight, domain expertise, and applicable regulatory requirements.
